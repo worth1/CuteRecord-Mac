@@ -1,0 +1,29 @@
+{
+  "files" : [
+    {
+      "contentHash" : "f79f8d2b7127bce11b770de69a4066a5e067b77e14955a7cc654400511048649",
+      "createdAt" : "2026-06-28T02:18:00Z",
+      "id" : "9AED9AF1-08DE-4849-9DBD-72F0E455C412",
+      "kind" : "markdown",
+      "relativePath" : "AGENTS.md",
+      "title" : "AGENTS",
+      "updatedAt" : "2026-06-28T03:48:50Z"
+    },
+    {
+      "contentHash" : "5f0bba95e09b68e1727a357bd9eab9e3316c0ec88f18e951de263770c6f65ae5",
+      "createdAt" : "2026-06-28T02:18:00Z",
+      "id" : "3DEA2A80-78AC-41E7-9F2E-18A3E0969E4C",
+      "kind" : "markdown",
+      "relativePath" : "README.md",
+      "title" : "README",
+      "updatedAt" : "2026-06-28T03:48:50Z"
+    }
+  ],
+  "projectID" : "E6BA220A-281C-48A3-B48C-2A380057FB7C",
+  "recordings" : [
+
+  ],
+  "selectedFileID" : "9AED9AF1-08DE-4849-9DBD-72F0E455C412",
+  "updatedAt" : "2026-06-28T03:48:50Z",
+  "version" : 1
+}
