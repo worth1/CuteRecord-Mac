@@ -164,7 +164,13 @@ CuteRecord is released under the [Apache License 2.0](LICENSE).
 
 ## 👨‍💻 Author
 
-**Nolan Lai** — [nolanlai.com](https://nolanlai.com)
+**worth01**
+
+---
+
+## 🙏 Acknowledgements
+
+CuteRecord evolved from [CueRecord](https://github.com/nolanlai/cuterecord) by **Nolan Lai**. Thank you for the incredible foundation.
 
 ---
 

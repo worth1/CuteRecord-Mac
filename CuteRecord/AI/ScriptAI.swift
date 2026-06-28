@@ -91,8 +91,8 @@ enum AIScriptError: LocalizedError {
 final class AIProviderAPIKeyStore {
     static let shared = AIProviderAPIKeyStore()
 
-    private let service = "com.nolanlai.cuterecord.ai-provider"
-    private let legacyDeepSeekService = "com.nolanlai.cuterecord.deepseek"
+    private let service = "com.worth01.cuterecord.ai-provider"
+    private let legacyDeepSeekService = "com.worth01.cuterecord.deepseek"
     private let legacyDeepSeekAccount = "api-key"
 
     private init() {}

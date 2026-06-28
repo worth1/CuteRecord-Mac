@@ -9,8 +9,8 @@ import AppKit
 class UpdateChecker {
     static let shared = UpdateChecker()
 
-    private let repoOwner = "nolanlai"
-    private let repoName = "cuterecord"
+    private let repoOwner = "worth01"
+    private let repoName = "CuteRecord"
 
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"

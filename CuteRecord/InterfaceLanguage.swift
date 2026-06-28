@@ -88,7 +88,7 @@ final class InterfaceLanguageSettings: ObservableObject {
         "Untitled": "未命名",
         "Version": "版本",
         "A recording workspace for scripted screen videos.": "面向脚本化屏幕视频的录制工作区。",
-        "Made by Nolan Lai": "Nolan Lai 制作",
+        "Made by worth01": "worth01 制作",
 
         "Set Up CuteRecord": "设置 CuteRecord",
         "Permissions": "权限",

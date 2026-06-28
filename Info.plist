@@ -27,8 +27,8 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.nolanlai.cuerecord.document</string>
-				<string>com.nolanlai.cueshot.document</string>
+				<string>com.worth01.cuterecord.document</string>
+				<string>com.worth01.cuterecord.cueshot.document</string>
 			</array>
 		</dict>
 	</array>
@@ -43,7 +43,7 @@
 			<key>UTTypeDescription</key>
 			<string>CuteRecord Document</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.nolanlai.cuerecord.document</string>
+			<string>com.worth01.cuterecord.document</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -57,7 +57,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.nolanlai.cuerecord</string>
+			<string>com.worth01.cuterecord</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>cuerecord</string>
@@ -95,7 +95,7 @@
 			<key>UTTypeDescription</key>
 			<string>Legacy CuteRecord Document</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.nolanlai.takeone.document</string>
+			<string>com.worth01.cuterecord.takeone.document</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -113,7 +113,7 @@
 			<key>UTTypeDescription</key>
 			<string>Legacy CuteRecord Document</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.nolanlai.cueshot.document</string>
+			<string>com.worth01.cuterecord.cueshot.document</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

@@ -157,7 +157,7 @@ struct CuteRecordApp: App {
             CommandGroup(replacing: .windowArrangement) { }
             CommandGroup(replacing: .help) {
                 Button(interfaceLanguage.text("CuteRecord Help")) {
-                    if let url = URL(string: "https://github.com/nolanlai/cuterecord") {
+                    if let url = URL(string: "https://github.com/worth01/CuteRecord") {
                         NSWorkspace.shared.open(url)
                     }
                 }
