@@ -91,33 +91,31 @@ struct PermissionRequestAlertView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 标题
-            Text("需要获取权限以进行视频录制")
+            Text(uiText("Permission Required for Recording"))
                 .font(.title3)
                 .fontWeight(.semibold)
                 .padding(.top, 24)
                 .padding(.bottom, 12)
 
-            // 内容
             VStack(alignment: .leading, spacing: 8) {
-                Text("为正常使用视频录制功能，需要获取以下权限：")
+                Text(uiText("The following permissions are needed for video recording:"))
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 4)
 
-                PermissionRow(icon: "rectangle.on.rectangle", text: "屏幕录制：捕获屏幕内容")
-                PermissionRow(icon: "mic.fill", text: "麦克风：录制声音")
-                PermissionRow(icon: "camera.fill", text: "相机：录制视频画面")
+                PermissionRow(icon: "rectangle.on.rectangle", text: uiText("Screen Recording: Capture screen content"))
+                PermissionRow(icon: "mic.fill", text: uiText("Microphone: Record audio"))
+                PermissionRow(icon: "camera.fill", text: uiText("Camera: Record video"))
             }
             .padding(.horizontal, 32)
             .padding(.bottom, 20)
 
-            // 请求中状态
             if isRequesting {
                 HStack(spacing: 8) {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("正在请求\(currentRequestingPermission)权限...")
+                    Text(InterfaceLanguageSettings.shared.format(
+                        uiText("Requesting %@ permission…"), currentRequestingPermission))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -126,12 +124,11 @@ struct PermissionRequestAlertView: View {
 
             Divider()
 
-            // 按钮
             HStack(spacing: 0) {
                 Button {
                     onCancel()
                 } label: {
-                    Text("取消")
+                    Text(uiText("Cancel"))
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
                 }
@@ -144,7 +141,7 @@ struct PermissionRequestAlertView: View {
                 Button {
                     requestAllPermissions()
                 } label: {
-                    Text("继续授权")
+                    Text(uiText("Continue"))
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
                         .fontWeight(.semibold)
@@ -172,19 +169,16 @@ struct PermissionRequestAlertView: View {
         isRequesting = true
 
         Task {
-            // 1. 触发系统文件访问弹窗（"CuteRecord" 想访问 "文稿" 文件夹中的文件）
-            currentRequestingPermission = "文件"
+            currentRequestingPermission = uiText("File Access")
             await MainActor.run {
                 onRequestFileAccess()
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
 
-            // 2. 麦克风权限
-            currentRequestingPermission = "麦克风"
+            currentRequestingPermission = uiText("Microphone")
             await permissionsManager.requestMicrophonePermission()
 
-            // 3. 相机权限
-            currentRequestingPermission = "相机"
+            currentRequestingPermission = uiText("Camera")
             await permissionsManager.requestCameraPermission()
 
             isRequesting = false
@@ -193,7 +187,7 @@ struct PermissionRequestAlertView: View {
     }
 }
 
-// MARK: - 权限行
+// MARK: - Permission Row
 
 private struct PermissionRow: View {
     let icon: String

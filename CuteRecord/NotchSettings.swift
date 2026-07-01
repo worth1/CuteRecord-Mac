@@ -165,6 +165,28 @@ enum CueBrightness: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Accent Color
+
+enum AccentColorPreset: String, CaseIterable, Identifiable {
+    case pink, blue
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pink: return "Pink"
+        case .blue: return "Blue"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .pink: return Color(red: 0.98, green: 0.42, blue: 0.58)
+        case .blue: return Color(red: 0.0, green: 0.48, blue: 1.0)
+        }
+    }
+}
+
 // MARK: - Overlay Mode
 
 enum OverlayMode: String, CaseIterable, Identifiable {
@@ -584,6 +606,10 @@ class NotchSettings: ObservableObject {
         didSet { UserDefaults.standard.set(cueBrightness.rawValue, forKey: "cueBrightness") }
     }
 
+    @Published var accentColor: AccentColorPreset {
+        didSet { UserDefaults.standard.set(accentColor.rawValue, forKey: "accentColor") }
+    }
+
     @Published var audienceFace: AudienceFace {
         didSet { UserDefaults.standard.set(audienceFace.rawValue, forKey: "audienceFace") }
     }
@@ -800,6 +826,7 @@ class NotchSettings: ObservableObject {
         self.fontColorPreset = FontColorPreset(rawValue: UserDefaults.standard.string(forKey: "fontColorPreset") ?? "") ?? .white
         self.cueColorPreset = FontColorPreset(rawValue: UserDefaults.standard.string(forKey: "cueColorPreset") ?? "") ?? .white
         self.cueBrightness = CueBrightness(rawValue: UserDefaults.standard.string(forKey: "cueBrightness") ?? "") ?? .dim
+        self.accentColor = AccentColorPreset(rawValue: UserDefaults.standard.string(forKey: "accentColor") ?? "") ?? .pink
         self.audienceFace = AudienceFace(rawValue: UserDefaults.standard.string(forKey: "audienceFace") ?? "") ?? .off
         self.customBackgroundImageBookmark = UserDefaults.standard.data(forKey: Self.customBackgroundImageBookmarkKey)
         self.customBackgroundImagePath = UserDefaults.standard.string(forKey: Self.customBackgroundImagePathKey) ?? ""

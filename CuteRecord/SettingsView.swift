@@ -280,29 +280,23 @@ struct NotchPreviewContent: View {
 // MARK: - Settings Tabs
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case appearance, guidance, teleprompter, external, browser, director
+    case display, voice, remote
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .appearance: return "Appearance"
-        case .guidance:   return "Guidance"
-        case .teleprompter: return "Teleprompter"
-        case .external:   return "External"
-        case .browser:    return "Remote"
-        case .director:   return "Director"
+        case .display: return "Display Settings"
+        case .voice:   return "Voice Settings"
+        case .remote:  return "Remote Settings"
         }
     }
 
     var icon: String {
         switch self {
-        case .appearance: return "paintpalette"
-        case .guidance:   return "waveform"
-        case .teleprompter: return "macwindow"
-        case .external:   return "rectangle.on.rectangle"
-        case .browser:    return "antenna.radiowaves.left.and.right"
-        case .director:   return "megaphone"
+        case .display: return "paintpalette"
+        case .voice:   return "waveform"
+        case .remote:  return "antenna.radiowaves.left.and.right"
         }
     }
 }
@@ -317,7 +311,7 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab
     @State private var showResetConfirmation = false
 
-    init(settings: NotchSettings, initialTab: SettingsTab = .appearance) {
+    init(settings: NotchSettings, initialTab: SettingsTab = .display) {
         self.settings = settings
         _selectedTab = State(initialValue: initialTab)
     }
@@ -370,18 +364,12 @@ struct SettingsView: View {
             // Content
             VStack(spacing: 0) {
                 switch selectedTab {
-                case .appearance:
-                    appearanceTab
-                case .guidance:
-                    guidanceTab
-                case .teleprompter:
-                    teleprompterTab
-                case .external:
-                    externalTab
-                case .browser:
-                    browserTab
-                case .director:
-                    directorTab
+                case .display:
+                    displayTab
+                case .voice:
+                    voiceTab
+                case .remote:
+                    remoteTab
                 }
 
                 Divider()
@@ -467,9 +455,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Appearance Tab
+    // MARK: - Display Tab
 
-    private var appearanceTab: some View {
+    @State private var overlayScreens: [NSScreen] = []
+    @State private var availableScreens: [NSScreen] = []
+
+    private var displayTab: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
                 // Font Family
@@ -644,6 +635,37 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
+                // Accent Color
+                Text(t("Theme"))
+                    .font(.system(size: 13, weight: .medium))
+
+                HStack(spacing: 8) {
+                    ForEach(AccentColorPreset.allCases) { preset in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { settings.accentColor = preset }
+                        } label: {
+                            VStack(spacing: 6) {
+                                Circle()
+                                    .fill(preset.color)
+                                    .frame(width: 22, height: 22)
+                                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                                    .overlay(
+                                        settings.accentColor == preset
+                                            ? Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                            : nil
+                                    )
+                                Text(preset.label)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(settings.accentColor == preset ? .primary : .secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(settings.accentColor == preset ? preset.color.opacity(0.1) : Color.primary.opacity(0.05)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 Divider()
 
                 // Dimensions
@@ -685,14 +707,220 @@ struct SettingsView: View {
                         )
                     }
                 }
+
+                Divider()
+
+                // Overlay Mode
+                Text(t("Teleprompter"))
+                    .font(.system(size: 13, weight: .medium))
+
+                Picker("", selection: $settings.overlayMode) {
+                    ForEach(OverlayMode.allCases) { mode in
+                        Text(mode.localizedLabel).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(settings.overlayMode.localizedDescription)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                // Background
+                Text(t("Background"))
+                    .font(.system(size: 13, weight: .medium))
+
+                Picker("", selection: $settings.audienceFace) {
+                    ForEach(AudienceFace.allCases) { face in
+                        Text(face.localizedLabel).tag(face)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                if settings.audienceFace == .customImage {
+                    customBackgroundImageControls
+                }
+
+                teleprompterBackgroundPreview
+
+                // Pinned mode options
+                if settings.overlayMode == .pinned {
+                    Divider()
+
+                    Picker("", selection: $settings.notchDisplayMode) {
+                        ForEach(NotchDisplayMode.allCases) { mode in
+                            Text(mode.localizedLabel).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    if settings.notchDisplayMode == .fixedDisplay {
+                        displayPicker(
+                            screens: overlayScreens,
+                            selectedID: $settings.pinnedScreenID,
+                            onRefresh: { refreshOverlayScreens() }
+                        )
+                    }
+
+                    Divider()
+
+                    Toggle(isOn: $settings.overlayTransparency) {
+                        Text(t("Transparency"))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if settings.overlayTransparency {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(t("Amount"))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(Int(settings.overlayTransparencyOpacity * 100))%")
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            Slider(value: $settings.overlayTransparencyOpacity, in: 0.2...0.95, step: 0.05)
+                        }
+                    }
+                }
+
+                // Floating mode options
+                if settings.overlayMode == .floating {
+                    Divider()
+
+                    Toggle(isOn: $settings.followCursorWhenUndocked) {
+                        Text(t("Follow Cursor"))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    Divider()
+
+                    Toggle(isOn: $settings.floatingGlassEffect) {
+                        Text(t("Glass Effect"))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if settings.floatingGlassEffect {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(t("Opacity"))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(Int(settings.glassOpacity * 100))%")
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            Slider(value: $settings.glassOpacity, in: 0.0...0.6, step: 0.05)
+                        }
+                    }
+                }
+
+                // Fullscreen mode options
+                if settings.overlayMode == .fullscreen {
+                    Divider()
+
+                    displayPicker(
+                        screens: overlayScreens,
+                        selectedID: $settings.fullscreenScreenID,
+                        onRefresh: { refreshOverlayScreens() }
+                    )
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "escape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(t("Press Esc to stop the teleprompter."))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+                }
+
+                Divider()
+
+                // Checkboxes
+                Toggle(isOn: $settings.showElapsedTime) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t("Elapsed Time"))
+                            .font(.system(size: 13, weight: .medium))
+                        Text(t("Display a running timer while the teleprompter is active."))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.checkbox)
+
+                Toggle(isOn: $settings.hideFromScreenShare) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t("Hide from Screen Sharing"))
+                            .font(.system(size: 13, weight: .medium))
+                        Text(t("Hide the overlay from screen recordings and video calls."))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.checkbox)
+
+                Divider()
+
+                // External Display
+                Text(t("External Display"))
+                    .font(.system(size: 13, weight: .medium))
+
+                Picker("", selection: $settings.externalDisplayMode) {
+                    ForEach(ExternalDisplayMode.allCases) { mode in
+                        Text(mode.localizedLabel).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                if settings.externalDisplayMode == .mirror {
+                    Picker("", selection: $settings.mirrorAxis) {
+                        ForEach(MirrorAxis.allCases) { axis in
+                            Text(axis.localizedLabel).tag(axis)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if settings.externalDisplayMode != .off {
+                    displayPicker(
+                        screens: availableScreens,
+                        selectedID: $settings.externalScreenID,
+                        onRefresh: { refreshScreens() },
+                        emptyMessage: "No external displays detected. Connect a display or enable Sidecar."
+                    )
+                }
             }
             .padding(16)
         }
+        .onAppear {
+            refreshOverlayScreens()
+            refreshScreens()
+        }
     }
 
-    // MARK: - Guidance Tab
+    // MARK: - Voice Tab
 
-    private var guidanceTab: some View {
+    @State private var availableMics: [AudioInputDevice] = []
+
+    private var voiceTab: some View {
         VStack(alignment: .leading, spacing: 14) {
             Picker("", selection: $settings.listeningMode) {
                 ForEach(ListeningMode.allCases) { mode in
@@ -705,18 +933,6 @@ struct SettingsView: View {
             Text(settings.listeningMode.localizedDescription)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-
-            if settings.listeningMode == .wordTracking {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(t("ASR Model"))
-                        .font(.system(size: 13, weight: .medium))
-                    Text(SherpaOnnxModelLocator.modelDisplayName)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-            }
 
             if settings.listeningMode != .classic {
                 Divider()
@@ -746,20 +962,42 @@ struct SettingsView: View {
                             .font(.system(size: 12, weight: .regular, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
-                    Slider(
-                        value: $settings.scrollSpeed,
-                        in: 0.5...8,
-                        step: 0.5
-                    )
+                    Slider(value: $settings.scrollSpeed, in: 0.5...8, step: 0.5)
                     HStack {
-                        Text(t("Slower"))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                        Text(t("Slower")).font(.system(size: 10)).foregroundStyle(.tertiary)
                         Spacer()
-                        Text(t("Faster"))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                        Text(t("Faster")).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
+                }
+            }
+
+            Divider()
+
+            // Pagination
+            Text(t("Pagination"))
+                .font(.system(size: 13, weight: .semibold))
+
+            Toggle(isOn: $settings.autoNextPage) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t("Auto Next Page"))
+                        .font(.system(size: 13, weight: .medium))
+                    Text(t("Automatically advance to the next page after a countdown."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.checkbox)
+
+            if settings.autoNextPage {
+                HStack {
+                    Text(t("Countdown")).font(.system(size: 13))
+                    Spacer()
+                    Picker("", selection: $settings.autoNextPageDelay) {
+                        Text(t("3 seconds")).tag(3)
+                        Text(t("5 seconds")).tag(5)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
                 }
             }
 
@@ -769,311 +1007,145 @@ struct SettingsView: View {
         .onAppear { availableMics = AudioInputDevice.allInputDevices() }
     }
 
-    @State private var availableMics: [AudioInputDevice] = []
+    // MARK: - Remote Tab
 
-    // MARK: - Teleprompter Tab
+    @State private var localIP: String = BrowserServer.localIPAddress() ?? "localhost"
+    @State private var showBrowserAdvanced: Bool = false
+    @State private var showDirectorAdvanced: Bool = false
 
-    @State private var overlayScreens: [NSScreen] = []
-
-    private var teleprompterTab: some View {
+    private var remoteTab: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
-                // Overlay mode picker
-                Picker("", selection: $settings.overlayMode) {
-                    ForEach(OverlayMode.allCases) { mode in
-                        Text(mode.localizedLabel).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                Text(settings.overlayMode.localizedDescription)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                Divider()
-
-                Text(t("Background"))
-                    .font(.system(size: 13, weight: .medium))
-
-                Picker("", selection: $settings.audienceFace) {
-                    ForEach(AudienceFace.allCases) { face in
-                        Text(face.localizedLabel).tag(face)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                Text(teleprompterBackgroundDescription)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                if settings.audienceFace == .customImage {
-                    customBackgroundImageControls
-                }
-
-                teleprompterBackgroundPreview
-
-                if settings.overlayMode == .pinned {
-                    Divider()
-
-                    Text(t("Display"))
-                        .font(.system(size: 13, weight: .medium))
-
-                    Picker("", selection: $settings.notchDisplayMode) {
-                        ForEach(NotchDisplayMode.allCases) { mode in
-                            Text(mode.localizedLabel).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-
-                    Text(settings.notchDisplayMode.localizedDescription)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    if settings.notchDisplayMode == .fixedDisplay {
-                        displayPicker(
-                            screens: overlayScreens,
-                            selectedID: $settings.pinnedScreenID,
-                            onRefresh: { refreshOverlayScreens() }
-                        )
-                    }
-
-                    Divider()
-
-                    Toggle(isOn: $settings.overlayTransparency) {
-                        Text(t("Transparency"))
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-
-                    Text(t("Makes the overlay see-through so desktop content shows through."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    if settings.overlayTransparency {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(t("Amount"))
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("\(Int(settings.overlayTransparencyOpacity * 100))%")
-                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Slider(
-                                value: $settings.overlayTransparencyOpacity,
-                                in: 0.2...0.95,
-                                step: 0.05
-                            )
-                            HStack {
-                                Text(t("More transparent"))
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
-                                Spacer()
-                                Text(t("Less transparent"))
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-
-                if settings.overlayMode == .floating {
-                    Divider()
-
-                    Toggle(isOn: $settings.followCursorWhenUndocked) {
-                        Text(t("Follow Cursor"))
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-
-                    Text(t("The window follows your cursor and sticks to its bottom-right."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Toggle(isOn: $settings.floatingGlassEffect) {
-                        Text(t("Glass Effect"))
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-
-                    if settings.floatingGlassEffect {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(t("Opacity"))
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("\(Int(settings.glassOpacity * 100))%")
-                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Slider(
-                                value: $settings.glassOpacity,
-                                in: 0.0...0.6,
-                                step: 0.05
-                            )
-                        }
-                    }
-                }
-
-                if settings.overlayMode == .fullscreen {
-                    Divider()
-
-                    Text(t("Display"))
-                        .font(.system(size: 13, weight: .medium))
-
-                    displayPicker(
-                        screens: overlayScreens,
-                        selectedID: $settings.fullscreenScreenID,
-                        onRefresh: { refreshOverlayScreens() }
-                    )
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "escape")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text(t("Press Esc to stop the teleprompter."))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.primary.opacity(0.04))
-                    )
-                }
-
-                Divider()
-
-                // Options
-                Toggle(isOn: $settings.showElapsedTime) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t("Elapsed Time"))
-                            .font(.system(size: 13, weight: .medium))
-                        Text(t("Display a running timer while the teleprompter is active."))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.checkbox)
-
-                Toggle(isOn: $settings.hideFromScreenShare) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t("Hide from Screen Sharing"))
-                            .font(.system(size: 13, weight: .medium))
-                        Text(t("Hide the overlay from screen recordings and video calls."))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.checkbox)
-
-                Divider()
-
-                // Pagination
-                Text(t("Pagination"))
+                // Browser Server
+                Text(t("Browser Server"))
                     .font(.system(size: 13, weight: .semibold))
 
-                Toggle(isOn: $settings.autoNextPage) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t("Auto Next Page"))
-                            .font(.system(size: 13, weight: .medium))
-                        Text(t("Automatically advance to the next page after a countdown."))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.checkbox)
+                Text(t("Scan the QR code or open the URL with your iPhone, Android or TV browser on the same Wi-Fi network."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
-                if settings.autoNextPage {
-                    HStack {
-                        Text(t("Countdown"))
-                            .font(.system(size: 13))
-                        Spacer()
-                        Picker("", selection: $settings.autoNextPageDelay) {
-                            Text(t("3 seconds")).tag(3)
-                            Text(t("5 seconds")).tag(5)
+                Toggle(isOn: $settings.browserServerEnabled) {
+                    Text(t("Enable Remote Connection"))
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                if settings.browserServerEnabled {
+                    remoteConnectionView(
+                        url: "http://\(localIP):\(settings.browserServerPort)",
+                        advancedExpanded: $showBrowserAdvanced,
+                        port: Binding(
+                            get: { String(settings.browserServerPort) },
+                            set: { if let v = UInt16($0), v >= 1024 { settings.browserServerPort = v } }
+                        ),
+                        onRestart: {
+                            CuteRecordService.shared.browserServer.stop()
+                            CuteRecordService.shared.browserServer.start()
+                            localIP = BrowserServer.localIPAddress() ?? "localhost"
                         }
-                        .pickerStyle(.segmented)
-                        .frame(width: 160)
-                    }
+                    )
+                }
+
+                Divider()
+
+                // Director Mode
+                Text(t("Director Mode"))
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text(t("Director Mode lets a remote person control your teleprompter script in real-time via a web browser. The editor will be disabled while active."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Toggle(isOn: $settings.directorModeEnabled) {
+                    Text(t("Enable Director Mode"))
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                if settings.directorModeEnabled {
+                    remoteConnectionView(
+                        url: "http://\(localIP):\(settings.directorServerPort)",
+                        advancedExpanded: $showDirectorAdvanced,
+                        port: Binding(
+                            get: { String(settings.directorServerPort) },
+                            set: { if let v = UInt16($0), v >= 1024 { settings.directorServerPort = v } }
+                        ),
+                        onRestart: {
+                            CuteRecordService.shared.directorServer.stop()
+                            CuteRecordService.shared.directorServer.start()
+                            localIP = BrowserServer.localIPAddress() ?? "localhost"
+                        }
+                    )
                 }
             }
             .padding(16)
         }
-        .onAppear { refreshOverlayScreens() }
+        .onAppear { localIP = BrowserServer.localIPAddress() ?? "localhost" }
     }
 
-    // MARK: - External Tab
-
-    @State private var availableScreens: [NSScreen] = []
-
-    private var externalTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(t("Show the teleprompter on an external display or Sidecar iPad."))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            Picker("", selection: $settings.externalDisplayMode) {
-                ForEach(ExternalDisplayMode.allCases) { mode in
-                    Text(mode.localizedLabel).tag(mode)
-                }
+    @ViewBuilder
+    private func remoteConnectionView(
+        url: String,
+        advancedExpanded: Binding<Bool>,
+        port: Binding<String>,
+        onRestart: @escaping () -> Void
+    ) -> some View {
+        if let qrImage = generateQRCode(from: url) {
+            HStack {
+                Spacer()
+                Image(nsImage: qrImage)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 120, height: 120)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(settings.externalDisplayMode.localizedDescription)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            if settings.externalDisplayMode == .mirror {
-                Divider()
-
-                Text(t("Mirror Axis"))
-                    .font(.system(size: 13, weight: .medium))
-
-                Picker("", selection: $settings.mirrorAxis) {
-                    ForEach(MirrorAxis.allCases) { axis in
-                        Text(axis.localizedLabel).tag(axis)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                Text(settings.mirrorAxis.localizedDescription)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            if settings.externalDisplayMode != .off {
-                Divider()
-
-                Text(t("Target Display"))
-                    .font(.system(size: 13, weight: .medium))
-
-                displayPicker(
-                    screens: availableScreens,
-                    selectedID: $settings.externalScreenID,
-                    onRefresh: { refreshScreens() },
-                    emptyMessage: "No external displays detected. Connect a display or enable Sidecar."
-                )
-            }
-            Spacer()
         }
-        .padding(16)
-        .onAppear { refreshScreens() }
+
+        HStack(spacing: 10) {
+            Text(url)
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.accentColor)
+                .textSelection(.enabled)
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+
+        DisclosureGroup(t("Advanced"), isExpanded: advancedExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    TextField(t("Port"), text: port)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                    Text(t("Restart required after change"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(t("Restart"), action: onRestart)
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                }
+            }
+            .padding(.top, 8)
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.secondary)
     }
+
+    // MARK: - Background helpers (used by Display tab)
 
     private var teleprompterBackgroundDescription: String {
         switch settings.audienceFace {
@@ -1243,243 +1315,6 @@ struct SettingsView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         settings.setCustomBackgroundImageURL(url)
-    }
-
-    // MARK: - Remote Tab
-
-    @State private var localIP: String = BrowserServer.localIPAddress() ?? "localhost"
-    @State private var showAdvanced: Bool = false
-
-    private var browserTab: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(t("Scan the QR code or open the URL with your iPhone, Android or TV browser on the same Wi-Fi network."))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            Toggle(isOn: $settings.browserServerEnabled) {
-                Text(t("Enable Remote Connection"))
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-
-            if settings.browserServerEnabled {
-                Divider()
-
-                let url = "http://\(localIP):\(settings.browserServerPort)"
-
-                if let qrImage = generateQRCode(from: url) {
-                    HStack {
-                        Spacer()
-                        Image(nsImage: qrImage)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        Spacer()
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Text(url)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
-                        .textSelection(.enabled)
-
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(url, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.08))
-                )
-
-                DisclosureGroup(t("Advanced"), isExpanded: $showAdvanced) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(t("Port"))
-                                .font(.system(size: 13, weight: .medium))
-                            HStack(spacing: 8) {
-                                TextField(t("Port"), text: Binding(
-                                    get: { String(settings.browserServerPort) },
-                                    set: { str in
-                                        if let val = UInt16(str), val >= 1024 {
-                                            settings.browserServerPort = val
-                                        }
-                                    }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 80)
-
-                                Text(t("Restart required after change"))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-
-                                Spacer()
-
-                                Button(t("Restart")) {
-                                    CuteRecordService.shared.browserServer.stop()
-                                    CuteRecordService.shared.browserServer.start()
-                                    localIP = BrowserServer.localIPAddress() ?? "localhost"
-                                }
-                                .controlSize(.small)
-                                .buttonStyle(.bordered)
-                            }
-                        }
-
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Text(interfaceLanguage.format("Uses ports %@ (HTTP) and %@ (WebSocket).", String(settings.browserServerPort), String(settings.browserServerPort + 1)))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-            }
-
-        }
-        .padding(16)
-        }
-        .onAppear { localIP = BrowserServer.localIPAddress() ?? "localhost" }
-    }
-
-    // MARK: - Director Tab
-
-    @State private var directorLocalIP: String = BrowserServer.localIPAddress() ?? "localhost"
-    @State private var showDirectorAdvanced: Bool = false
-
-    private var directorTab: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(t("Director Mode lets a remote person control your teleprompter script in real-time via a web browser. The editor will be disabled while active."))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            Toggle(isOn: $settings.directorModeEnabled) {
-                Text(t("Enable Director Mode"))
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-
-            if settings.directorModeEnabled {
-                Divider()
-
-                let url = "http://\(directorLocalIP):\(settings.directorServerPort)"
-
-                if let qrImage = generateQRCode(from: url) {
-                    HStack {
-                        Spacer()
-                        Image(nsImage: qrImage)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        Spacer()
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Text(url)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
-                        .textSelection(.enabled)
-
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(url, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.08))
-                )
-
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Text(t("Word tracking is forced when the director starts reading."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                DisclosureGroup(t("Advanced"), isExpanded: $showDirectorAdvanced) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(t("Port"))
-                                .font(.system(size: 13, weight: .medium))
-                            HStack(spacing: 8) {
-                                TextField(t("Port"), text: Binding(
-                                    get: { String(settings.directorServerPort) },
-                                    set: { str in
-                                        if let val = UInt16(str), val >= 1024 {
-                                            settings.directorServerPort = val
-                                        }
-                                    }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 80)
-
-                                Text(t("Restart required after change"))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-
-                                Spacer()
-
-                                Button(t("Restart")) {
-                                    CuteRecordService.shared.directorServer.stop()
-                                    CuteRecordService.shared.directorServer.start()
-                                    directorLocalIP = BrowserServer.localIPAddress() ?? "localhost"
-                                }
-                                .controlSize(.small)
-                                .buttonStyle(.bordered)
-                            }
-                        }
-
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Text(interfaceLanguage.format("Uses ports %@ (HTTP) and %@ (WebSocket).", String(settings.directorServerPort), String(settings.directorServerPort + 1)))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-            }
-
-        }
-        .padding(16)
-        }
-        .onAppear { directorLocalIP = BrowserServer.localIPAddress() ?? "localhost" }
     }
 
     // MARK: - Shared Components

@@ -6,6 +6,7 @@ import CoreImage
 struct CameraDevice: Identifiable, Hashable {
     let id: String
     let name: String
+    var isContinuityCamera: Bool = false
 }
 
 @MainActor
@@ -121,7 +122,11 @@ class CameraManager: NSObject, ObservableObject {
     func refreshCameraDevices() {
         let devices = discoverCaptureDevices()
         availableCameras = devices.map { device in
-            CameraDevice(id: device.uniqueID, name: device.localizedName)
+            CameraDevice(
+                id: device.uniqueID,
+                name: cameraDisplayName(for: device),
+                isContinuityCamera: isContinuityCameraDevice(device)
+            )
         }
 
         if selectedCameraID.isEmpty || !availableCameras.contains(where: { $0.id == selectedCameraID }) {
@@ -130,6 +135,30 @@ class CameraManager: NSObject, ObservableObject {
 
         checkCameraAvailability()
         print("📷 找到 \(availableCameras.count) 个摄像头设备")
+    }
+
+    private func isContinuityCameraDevice(_ device: AVCaptureDevice) -> Bool {
+        if #available(macOS 14.0, *) {
+            return device.isContinuityCamera
+        }
+        return false
+    }
+
+    /// Build a display name — appends front/back for cameras that report a position
+    /// (some external USB cameras). Continuity Camera reports .unspecified so its
+    /// name is unchanged; switch front/back via macOS Control Center instead.
+    private func cameraDisplayName(for device: AVCaptureDevice) -> String {
+        let baseName = device.localizedName
+        switch device.position {
+        case .front:
+            return "\(baseName) 前置摄像头"
+        case .back:
+            return "\(baseName) 后置摄像头"
+        case .unspecified:
+            return baseName
+        @unknown default:
+            return baseName
+        }
     }
 
     var selectedCameraName: String {

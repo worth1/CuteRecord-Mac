@@ -270,7 +270,7 @@ private struct RecordingPreviewBarView: View {
                 .foregroundStyle(.white)
                 .frame(height: 46)
                 .padding(.horizontal, 20)
-                .background(Color.blue, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(NotchSettings.shared.accentColor.color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(controller.isStarting || controller.isRecording || controller.isStopping)
@@ -324,7 +324,7 @@ private struct RecordingPreviewBarView: View {
             .padding(.horizontal, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(recordingState.captureMode == .selectedArea ? Color.blue.opacity(0.20) : Color.primary.opacity(0.08))
+                    .fill(recordingState.captureMode == .selectedArea ? NotchSettings.shared.accentColor.color.opacity(0.20) : Color.primary.opacity(0.08))
             )
         }
         .menuStyle(.borderlessButton)
@@ -501,7 +501,7 @@ private struct RecordingPreviewBarView: View {
             }
             .frame(width: 54, height: 50)
             .foregroundStyle(selected ? .white : .primary)
-            .background(selected ? Color.blue.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(selected ? NotchSettings.shared.accentColor.color.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(title)
@@ -513,7 +513,7 @@ private struct RecordingPreviewBarView: View {
                 .font(.system(size: 17, weight: .semibold))
                 .frame(width: 46, height: 46)
                 .foregroundStyle(isOn ? .white : .primary)
-                .background(isOn ? Color.blue.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(isOn ? NotchSettings.shared.accentColor.color.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(title)

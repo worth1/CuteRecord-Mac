@@ -29,7 +29,6 @@ class SherpaOnnxStreamingASR {
 
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
-        print("[Dictation] input format: \(format)")
 
         // Select specific mic if requested
         if !selectedMicUID.isEmpty {
@@ -47,7 +46,6 @@ class SherpaOnnxStreamingASR {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             if !(self?.tapFired ?? true) {
                 self?.tapFired = true
-                print("[Dictation] Tap is firing — audio captured!")
             }
             guard let self = self else { return }
 
@@ -74,20 +72,17 @@ class SherpaOnnxStreamingASR {
         engine.prepare()
         do {
             try engine.start()
-            print("[Dictation] Engine isRunning: \(engine.isRunning)")
 
             // Verify tap fires within 2s
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let self, self.audioEngine != nil else { return }
                 if !self.tapFired {
-                    print("[Dictation] WARNING: Tap never fired — mic may be blocked")
                     DispatchQueue.main.async {
                         self.onError?("Microphone not delivering audio. Check System Settings → Privacy & Security → Microphone.")
                     }
                 }
             }
         } catch {
-            print("[Dictation] Engine start error: \(error.localizedDescription)")
             DispatchQueue.main.async {
                 self.onError?("Audio engine failed: \(error.localizedDescription)")
             }

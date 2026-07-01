@@ -68,12 +68,13 @@ struct ContentView: View {
     @State private var dropError: String?
     @State private var dropAlertTitle: String = "Import Error"
     @State private var showSettings = false
-    @State private var settingsInitialTab: SettingsTab = .appearance
+    @State private var settingsInitialTab: SettingsTab = .display
     @State private var showAbout = false
     @State private var showAIScriptComposer = false
     @State private var aiScriptStatus: AIScriptGenerationStatus = .idle
     @State private var aiScriptTask: Task<Void, Never>?
     @State private var aiScriptCompletionResetTask: Task<Void, Never>?
+    @State private var showWelcome: Bool = !UserDefaults.standard.bool(forKey: "cuteRecord.welcomeSeen")
     @State private var showPermissionAlert = true
     @State private var showMainContent = false
     @State private var permissionRequestWindow = PermissionRequestWindow()
@@ -373,22 +374,72 @@ struct ContentView: View {
         }
     }
 
+    private var editorToolbarRow: some View {
+        HStack(spacing: 0) {
+            // Left side: word count overlapped by waveform when dictating
+            ZStack(alignment: .leading) {
+                if currentPageHasContent && !isDictating {
+                    HStack(spacing: 8) {
+                        Text(wordCountLabel)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text(readingTimeLabel)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if isDictating {
+                    AudioWaveformView(levels: dictation.audioLevels, color: .red)
+                        .frame(width: 140, height: 18)
+                        .clipped()
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+            }
+            Spacer()
+            editorToolbarButtons
+        }
+        .animation(.easeInOut(duration: 0.25), value: isDictating)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 20)
+    }
+
+    private var wordCountLabel: String {
+        let text = service.currentPageText
+        let chars = text.count
+        if chars < 1000 {
+            return "\(chars) \(t("chars"))"
+        }
+        return String(format: "%.1fk \(t("chars"))", Double(chars) / 1000.0)
+    }
+
+    private var readingTimeLabel: String {
+        let text = service.currentPageText
+        let isChinese = interfaceLanguage.language == .simplifiedChinese
+        // Chinese: ~250 chars/min, English: ~150 words/min
+        let chars = text.count
+        let words = text.split(separator: " ").count
+        let effectiveCount = isChinese ? chars : words
+        let rate = isChinese ? 250.0 : 150.0
+        let minutes = max(1, Int(ceil(Double(effectiveCount) / rate)))
+        if minutes < 60 {
+            return "~\(minutes) min"
+        }
+        let h = minutes / 60
+        let m = minutes % 60
+        return "~\(h)h \(m)m"
+    }
+
     private var editorToolbarButtons: some View {
         let isAIButtonDisabled = isAIScriptProcessing || !currentPageHasContent || isRunning || isDictating || recordingController.isRecording || recordingController.isPreviewing
 
         return HStack(spacing: 6) {
-            // Small inline waveform when dictating — same row, left side
-            if isDictating {
-                AudioWaveformView(levels: dictation.audioLevels, color: .red)
-                    .frame(width: 100, height: 18)
-                    .clipped()
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
-                    .transition(.scale(scale: 0.8).combined(with: .opacity))
-            }
-
             // Mic button — compact pill, same style as AI
             Button {
                 if isDictating {
@@ -450,7 +501,12 @@ struct ContentView: View {
             .opacity(isAIButtonDisabled ? 0.5 : 1)
             .help("AI Breath Cuts")
         }
-        .animation(.easeInOut(duration: 0.25), value: isDictating)
+    }
+
+    private var hasUnsavedChanges: Bool {
+        guard service.currentPageIndex < service.pages.count,
+              service.currentPageIndex < service.savedPages.count else { return false }
+        return service.pages[service.currentPageIndex] != service.savedPages[service.currentPageIndex]
     }
 
     private var pageTitleHeader: some View {
@@ -481,16 +537,24 @@ struct ContentView: View {
                     }
             }
 
+            if hasUnsavedChanges {
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 5)
+                    .help("Unsaved changes")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
-        .padding(.top, 32)
+        .padding(.top, 24)
         .padding(.bottom, 6)
     }
 
     private var mainContent: some View {
         VStack(spacing: 0) {
             pageTitleHeader
+            Divider()
 
             ZStack(alignment: .topTrailing) {
                 HighlightingTextEditor(
@@ -502,7 +566,6 @@ struct ContentView: View {
                 )
                 .onChange(of: editorCaretPosition) { _, newPos in
                     guard isDictating else { return }
-                    // If caret moved away from end of current segment, user clicked elsewhere
                     let segmentEnd = segmentStart + segmentLength
                     if newPos != segmentEnd {
                         beginNewSegment()
@@ -523,11 +586,6 @@ struct ContentView: View {
                         endPoint: .bottom
                     )
                 )
-                .overlay(alignment: .bottomTrailing) {
-                    editorToolbarButtons
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 16)
-                }
 
                 // Drop zone overlay — sits on top so TextEditor doesn't steal the drop
                 if isDroppingPresentation {
@@ -581,16 +639,40 @@ struct ContentView: View {
                     return true
                 }
                 .allowsHitTesting(isDroppingPresentation)
+
+                // Empty state — placeholder hint + cute cat
+                if !currentPageHasContent && !isDictating && !isRunning && !recordingController.isRecording {
+                    if !isTextFocused {
+                        Text(t("Type your script here…"))
+                            .font(.system(size: 15))
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 8)
+                            .padding(.leading, 24)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                    }
+
+                    if let catURL = Bundle.main.url(forResource: "cat_empty_state", withExtension: "png"),
+                       let catImage = NSImage(contentsOf: catURL) {
+                        Image(nsImage: catImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 170)
+                            .opacity(0.18)
+                            .padding(.trailing, 24)
+                            .offset(y: 10)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            .allowsHitTesting(false)
+                    }
+                }
             }
+
+            // Toolbar — sits above the recording button, separated from editor text
+            editorToolbarRow
 
             // Bottom recording bar
             VStack(spacing: 10) {
                 Button {
-                    print("🔴 录制按钮被点击")
-                    print("   isRecording: \(recordingController.isRecording)")
-                    print("   isStarting: \(recordingController.isStarting)")
-                    print("   isStopping: \(recordingController.isStopping)")
-                    
                     if recordingController.isRecording {
                         Task {
                             let outputURL = await recordingController.stopSimpleRecordingAndGetOutput()
@@ -636,7 +718,7 @@ struct ContentView: View {
                                 .foregroundStyle(.white)
                                 .frame(height: 40)
                                 .padding(.horizontal, 20)
-                                .background(Color.blue)
+                                .background(NotchSettings.shared.accentColor.color)
                                 .clipShape(Capsule())
                                 .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
                                 .padding(.top, 4)
@@ -648,7 +730,8 @@ struct ContentView: View {
                 .opacity(isDictating || recordingController.isStarting || recordingController.isStopping ? 0.4 : 1)
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.bottom, 10)
+            .padding(.top, 2)
         }
     }
 
@@ -758,7 +841,18 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if NotchSettings.shared.directorModeEnabled {
+            if showWelcome {
+                WelcomeView {
+                    UserDefaults.standard.set(true, forKey: "cuteRecord.welcomeSeen")
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showWelcome = false
+                    }
+                    // Create sample workspace on first launch
+                    if service.vaultURL == nil {
+                        service.createSampleWorkspace()
+                    }
+                }
+            } else if NotchSettings.shared.directorModeEnabled {
                 directorOverlay
             } else if shouldShowVaultPicker {
                 vaultPicker
@@ -773,6 +867,7 @@ struct ContentView: View {
                         mainContent
                             .ignoresSafeArea(.container, edges: .top)
                     }
+                    .accentColor(NotchSettings.shared.accentColor.color)
                 }
             }
         }
@@ -797,7 +892,7 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-            settingsInitialTab = .appearance
+            settingsInitialTab = .display
             showSettings = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .openAbout)) { _ in
@@ -951,7 +1046,7 @@ struct ContentView: View {
                 Spacer()
 
                 Button {
-                    settingsInitialTab = .appearance
+                    settingsInitialTab = .display
                     showSettings = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
@@ -1493,8 +1588,11 @@ struct ContentView: View {
         prepareRecordingOutputName()
         let shouldShowTeleprompter = currentPageHasContent
 
-        // 使用新的 SimpleScreenRecorder 启动录制
+        // Show 3-2-1 countdown before recording starts
         Task {
+            await showRecordingCountdown()
+            SoundPlayer.play("match")
+
             await recordingController.startSimpleRecording()
             
             if recordingController.isRecording {
@@ -1555,7 +1653,6 @@ struct ContentView: View {
             } else {
                 // 录制启动失败
                 if let error = recordingController.lastError {
-                    print("❌ 录制启动失败: \(error)")
                 }
                 presentRecordingPreview()
             }
@@ -1826,6 +1923,44 @@ struct ContentView: View {
         }
     }
 
+    @MainActor
+    private func showRecordingCountdown() async {
+        guard let screen = NSScreen.main else { return }
+        let size: CGFloat = 200
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: size, height: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .screenSaver
+        panel.center()
+        panel.orderFrontRegardless()
+
+        for count in (1...3).reversed() {
+            let hostView = NSHostingView(rootView: CountdownView(count: count))
+            hostView.frame = NSRect(x: 0, y: 0, width: size, height: size)
+            panel.contentView = hostView
+            panel.alphaValue = 0
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0.12
+            panel.animator().alphaValue = 1
+            NSAnimationContext.endGrouping()
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0.08
+            panel.animator().alphaValue = 0
+            NSAnimationContext.endGrouping()
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        panel.orderOut(nil)
+        panel.close()
+    }
+
     private func prepareRecordingOutputName() {
         recordingController.recordingState.outputSessionName = service.currentRecordingSessionName()
         if let projectDirectoryURL = service.currentProjectDirectoryURL() {
@@ -1841,7 +1976,7 @@ struct AboutView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguageSettings.shared
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1"
     }
 
     private func t(_ english: String) -> String {
@@ -1872,7 +2007,7 @@ struct AboutView: View {
             Divider().padding(.horizontal, 20)
 
             VStack(spacing: 4) {
-                Text(t("Made by Nolan Lai"))
+                Text(t("Made by worth01"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text("CuteRecord")

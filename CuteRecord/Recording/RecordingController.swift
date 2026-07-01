@@ -482,7 +482,28 @@ final class RecordingController: ObservableObject {
             exportStatusText = nil
             lastOutputURL = result.finalOutputURL
             recordingLibraryChangeID = UUID()
-            revealRecordingInFinder(result.finalOutputURL)
+
+            // Suppress FSEvent-triggered vault refreshes so that the export
+            // artifacts (video files written to the project directory) do not
+            // cause false "file changed on disk" errors for script pages.
+            CuteRecordService.shared.suppressVaultEvents(forSeconds: 5.0)
+
+            SoundPlayer.play("lling")
+            // Show success alert first; only open Finder when the user clicks the button.
+            showExportSuccessAlert(for: result.finalOutputURL)
+        }
+    }
+
+    private func showExportSuccessAlert(for url: URL) {
+        let alert = NSAlert()
+        alert.messageText = uiText("Export Successful")
+        alert.informativeText = uiText("The video has been exported successfully.")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: uiText("Show in Finder"))
+        alert.addButton(withTitle: uiText("Done!"))
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            revealRecordingInFinder(url)
         }
     }
 
@@ -491,7 +512,6 @@ final class RecordingController: ObservableObject {
         completion: ((Bool) -> Void)? = nil
     ) {
         guard !recordingState.isRecording && !screenRecorder.isRecording && !isStarting else {
-            print("❌ 录制启动被阻止: isRecording=\(recordingState.isRecording), screenRecorder.isRecording=\(screenRecorder.isRecording), isStarting=\(isStarting)")
             completion?(false)
             return
         }
@@ -920,24 +940,19 @@ final class RecordingController: ObservableObject {
         isStarting = true
         lastError = nil
         
-        // 请求摄像头和麦克风权限
-        await permissionsManager.requestCameraPermission()
-        await permissionsManager.requestMicrophonePermission()
-        
-        print("   摄像头权限: \(permissionsManager.cameraAuthorized)")
-        print("   麦克风权限: \(permissionsManager.microphoneAuthorized)")
-        
+        // 检查权限（不重复弹系统对话框，体验更好）
+        await permissionsManager.checkCameraPermission()
+        await permissionsManager.checkMicrophonePermission()
+
         guard permissionsManager.cameraAuthorized else {
             isStarting = false
             lastError = "需要摄像头权限"
-            print("❌ 摄像头权限未授权")
             return
         }
-        
+
         guard permissionsManager.microphoneAuthorized else {
             isStarting = false
             lastError = "需要麦克风权限"
-            print("❌ 麦克风权限未授权")
             return
         }
         
@@ -950,13 +965,11 @@ final class RecordingController: ObservableObject {
         let timestamp = formatter.string(from: Date())
         let outputURL = recordingState.outputDirectory.appendingPathComponent("Camera_\(timestamp).mov")
         
-        print("   输出文件: \(outputURL.lastPathComponent)")
         
         // 获取摄像头分辨率用于 writer
         let resolution = cameraManager.currentResolution
         let writerWidth = Int(resolution.width)
         let writerHeight = Int(resolution.height)
-        print("   摄像头分辨率: \(writerWidth)x\(writerHeight)")
         
         // 确保 CameraManager 已启动采集（带音频），复用同一个 session
         do {

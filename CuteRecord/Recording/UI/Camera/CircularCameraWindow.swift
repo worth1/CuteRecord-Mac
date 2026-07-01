@@ -199,7 +199,6 @@ class CircularCameraWindow: NSObject {
     func resizeWindow(to size: CameraOverlaySize) {
         guard let window = cameraWindow else { return }
         
-        print("🔄 调整摄像头窗口大小为: \(size)")
         cameraSize = size
         
         let newSize = constrainedOverlayWindowSize(for: size, shape: cameraShape, recordingRect: currentRecordingRect)
@@ -222,7 +221,6 @@ class CircularCameraWindow: NSObject {
     func updateShape(to shape: CameraOverlayShape) {
         guard let window = cameraWindow else { return }
 
-        print("🔄 调整摄像头窗口形状为: \(shape.displayName)")
         cameraShape = shape
 
         let currentFrame = window.frame
@@ -375,7 +373,6 @@ class CircularCameraWindow: NSObject {
         // 如果是区域录制，基于录制区域定位
         if let recordingRect = recordingRect {
             let margin = cameraMargin(for: recordingRect)
-            print("🎯 基于录制区域定位摄像头: \(recordingRect)")
 
             let proposedOrigin: NSPoint
             switch position {

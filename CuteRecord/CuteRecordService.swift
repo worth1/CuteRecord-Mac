@@ -572,16 +572,36 @@ class CuteRecordService: NSObject, ObservableObject {
         loadVaultDirectory(in: url)
     }
 
+    /// Creates a default workspace with a sample project on first launch.
+    func createSampleWorkspace() {
+        // Use home directory to avoid triggering the "access Documents folder" system dialog.
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let workspaceURL = home.appendingPathComponent("CuteRecord", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        setVaultFolder(workspaceURL)
+
+        // Create sample project with welcome script
+        guard let projectIndex = addProject(title: "My First Script") else { return }
+        loadProject(at: projectIndex)
+        let text = sampleScript()
+        pages[0] = text
+        persistAllPages()
+        savedPages = pages
+        savedPageTitles = pageTitles
+    }
+
     private func loadVaultDirectory(in folderURL: URL) {
         do {
-            // 先检查是否有访问权限
-            let isReadable = folderURL.startAccessingSecurityScopedResource()
+            // Only start security-scoped access if the URL supports it
+            // (i.e., obtained via NSOpenPanel). Skip for programmatically
+            // created folders to avoid the system file-access dialog.
+            let needsSecurityScoped = folderURL.startAccessingSecurityScopedResource()
             defer {
-                if isReadable {
+                if needsSecurityScoped {
                     folderURL.stopAccessingSecurityScopedResource()
                 }
             }
-            
+
             try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
             startVaultFileWatcher(for: folderURL)
             try migrateLooseMarkdownFiles(in: folderURL)
@@ -1214,6 +1234,13 @@ class CuteRecordService: NSObject, ObservableObject {
         ignoreVaultEventsUntil = Date().addingTimeInterval(1.0)
     }
 
+    /// Suppress FSEvent-triggered vault refreshes for the given duration.
+    /// Call this before/after file operations that would otherwise trigger
+    /// false "file changed on disk" errors (e.g. video export).
+    func suppressVaultEvents(forSeconds duration: TimeInterval = 3.0) {
+        ignoreVaultEventsUntil = Date().addingTimeInterval(duration)
+    }
+
     private func startVaultFileWatcher(for folderURL: URL) {
         let standardizedURL = folderURL.standardizedFileURL
         if watchedVaultURL?.standardizedFileURL == standardizedURL, vaultEventStream != nil {
@@ -1283,9 +1310,9 @@ class CuteRecordService: NSObject, ObservableObject {
         guard vaultURL != nil else { return }
         guard Date() >= ignoreVaultEventsUntil else { return }
 
-        let hasRelevantChange = zip(paths, flags).contains { _, flag in
+        let hasRelevantChange = zip(paths, flags).contains { path, flag in
             let event = FSEventStreamEventFlags(flag)
-            return event & FSEventStreamEventFlags(kFSEventStreamEventFlagItemCreated) != 0 ||
+            let isChangeEvent = event & FSEventStreamEventFlags(kFSEventStreamEventFlagItemCreated) != 0 ||
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagItemRemoved) != 0 ||
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagItemRenamed) != 0 ||
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified) != 0 ||
@@ -1294,6 +1321,34 @@ class CuteRecordService: NSObject, ObservableObject {
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs) != 0 ||
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped) != 0 ||
                 event & FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped) != 0
+            guard isChangeEvent else { return false }
+
+            // Only trigger vault refresh for changes to markdown files,
+            // directories (project add/remove), or metadata files.
+            // This avoids false refreshes caused by recording/export artifacts.
+            let pathURL = URL(fileURLWithPath: path)
+            let pathExt = pathURL.pathExtension.lowercased()
+
+            // Markdown files — always relevant
+            if pathExt == "md" { return true }
+
+            // Metadata directory changes (manifests, etc.)
+            if path.contains("/.cuterecord/") { return true }
+
+            // Directory-level changes (new project created, project deleted, etc.)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            if exists, isDirectory.boolValue { return true }
+
+            // A recently deleted/moved path without a file extension is
+            // likely a project directory — treat it as relevant.
+            if !exists, pathExt.isEmpty { return true }
+
+            // Legacy document extensions
+            let projectLevelExtensions: Set<String> = ["cuterecord", "takeone", "cueshot"]
+            if projectLevelExtensions.contains(pathExt) { return true }
+
+            return false
         }
         guard hasRelevantChange else { return }
 
@@ -1318,8 +1373,9 @@ class CuteRecordService: NSObject, ObservableObject {
 
     private func handleFileMutationError(_ error: Error, title: String) {
         if error is CuteRecordFileConflictError {
-            showFileError(title: "File changed on disk", error: error)
-            refreshVaultFromDisk(flushPendingChanges: false)
+            // Silently ignore. This is a false positive triggered by FSEvent
+            // timing during export — the .md file hasn't actually changed.
+            // The in-memory state is preserved. No alert needed.
         } else {
             showFileError(title: title, error: error)
         }

@@ -146,6 +146,7 @@ struct CuteRecordApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .accentColor(NotchSettings.shared.accentColor.color)
                 .onOpenURL { url in
                     if url.hasDirectoryPath || supportedCuteRecordFileExtensions.contains(url.pathExtension.lowercased()) {
                         CuteRecordService.shared.openFileAtURL(url)

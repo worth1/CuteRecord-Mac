@@ -161,7 +161,6 @@ class ScreenRecorder: NSObject, ObservableObject {
         // 只录制摄像头模式下，不需要检查屏幕录制权限
         guard recordScreen else {
             canRecord = true
-            print("📺 只录制摄像头模式：canRecord = true")
             return
         }
 
@@ -170,7 +169,6 @@ class ScreenRecorder: NSObject, ObservableObject {
                 // 检查ScreenCaptureKit可用性和权限
                 let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 canRecord = !availableContent.displays.isEmpty
-                print("📺 ScreenCaptureKit 可用: \(canRecord)")
             } catch {
                 canRecord = false
                 print("❌ ScreenCaptureKit 检查失败: \(error)")
@@ -212,7 +210,6 @@ class ScreenRecorder: NSObject, ObservableObject {
         }
         
         print("🎬 开始录制...")
-        print("   录制屏幕: \(recordScreen), 摄像头: \(cameraOverlay)")
         
         // 设置录制模式标志
         self.recordScreen = recordScreen
@@ -356,7 +353,6 @@ class ScreenRecorder: NSObject, ObservableObject {
     }
 
     private func cleanupAfterFailedStart() async {
-        print("🧹 清理录制启动失败后的临时资源")
 
         if let stream {
             try? await stream.stopCapture()
@@ -394,7 +390,6 @@ class ScreenRecorder: NSObject, ObservableObject {
     
     // MARK: - 全屏录制
     private func startFullScreenRecording(displayID: CGDirectDisplayID?) async throws {
-        print("📺 开始全屏录制...")
         
         let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let display: SCDisplay
@@ -416,14 +411,12 @@ class ScreenRecorder: NSObject, ObservableObject {
         recordingModeName = "fullScreen"
         recordingRect = display.frame
 
-        print("📺 全屏录制目标显示器: \(display.displayID)")
         
         try await setupStreamAndWriter(for: display, rect: nil, availableContent: availableContent)
     }
     
     // MARK: - 区域录制  
     private func startAreaRecording(rect: CGRect) async throws {
-        print("🔍 开始区域录制: \(rect)")
         
         let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = displayContaining(rect, in: availableContent.displays) ?? availableContent.displays.first else {
@@ -442,7 +435,6 @@ class ScreenRecorder: NSObject, ObservableObject {
 
     // MARK: - 窗口录制
     private func startWindowRecording(target: WindowRecordingTarget) async throws {
-        print("🪟 开始窗口录制: \(target.displayName), id: \(target.windowID), frame: \(target.frame)")
 
         let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = displayContaining(target.frame, in: availableContent.displays) ?? availableContent.displays.first else {
@@ -554,7 +546,6 @@ class ScreenRecorder: NSObject, ObservableObject {
         } else {
             let excludedWindows = ownShareableWindows(in: availableContent)
             if !excludedWindows.isEmpty {
-                print("🪟 Excluding \(excludedWindows.count) CuteRecord windows from capture")
             }
             filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         }
@@ -573,10 +564,6 @@ class ScreenRecorder: NSObject, ObservableObject {
             config.queueDepth = 3
             config.colorSpaceName = CGColorSpace.sRGB
 
-            print("🪟 窗口录制配置:")
-            print("   目标窗口: \(targetRect)")
-            print("   缩放因子: \(scaleFactor)")
-            print("   输出分辨率: \(alignedWidth)x\(alignedHeight)")
         } else if let rect = rect {
             // 🎯 区域录制配置 - 像素对齐优化
             let scaleFactor = backingScaleFactor(for: rect)
@@ -617,11 +604,6 @@ class ScreenRecorder: NSObject, ObservableObject {
             config.queueDepth = 3
             config.colorSpaceName = CGColorSpace.sRGB
             
-            print("🎯 像素对齐优化:")
-            print("   原始区域: \(rect)")
-            print("   像素对齐后: \(alignedRect)")
-            print("   转换后区域: \(convertedRect)")
-            print("   输出分辨率: \(alignedWidth)x\(alignedHeight) (1:1采样)")
         } else {
             let nativeDimensions = nativeDisplayPixelDimensions(for: filter, display: display)
             config.width = nativeDimensions.width
@@ -629,10 +611,6 @@ class ScreenRecorder: NSObject, ObservableObject {
             config.queueDepth = 3
             config.colorSpaceName = CGColorSpace.sRGB
 
-            print("📺 显示器信息:")
-            print("   Display ID: \(display.displayID)")
-            print("   Frame: \(display.frame)")
-            print("   ScreenCaptureKit报告: \(display.width)x\(display.height)")
             print("   像素倍率: \(nativeDimensions.scaleFactor)")
             print("   分辨率来源: \(nativeDimensions.source)")
             print("   最终录制分辨率: \(nativeDimensions.width)x\(nativeDimensions.height)")

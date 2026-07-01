@@ -5,15 +5,15 @@
 	<key>ATSApplicationFontsPath</key>
 	<string>.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>CuteRecord needs to capture system audio when recording your screen.</string>
+	<string>录制屏幕时需要捕获系统音频</string>
 	<key>NSCameraUsageDescription</key>
-	<string>CuteRecord needs camera access for the recording camera overlay.</string>
+	<string>录制时需要访问摄像头，用于在视频中显示您的画面</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>CuteRecord needs microphone access to include your voice in recordings and speech guidance.</string>
+	<string>录制时需要访问麦克风，用于录制您的声音</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>CuteRecord needs speech recognition to convert your dictation to text in real-time.</string>
+	<string>需要语音识别权限，用于将您的语音实时转换为文字</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>CuteRecord needs screen recording access to capture your screen while recording.</string>
+	<string>需要屏幕录制权限，用于录制您的屏幕内容</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>需要访问相册以保存录制的视频</string>
 	<key>CFBundleDocumentTypes</key>

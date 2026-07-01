@@ -9,6 +9,7 @@ import Foundation
 import AVFoundation
 import CoreAudio
 import Combine
+import Speech
 
 struct AudioInputDevice: Identifiable, Hashable {
     let id: AudioDeviceID
@@ -108,6 +109,13 @@ class SpeechRecognizer: ObservableObject {
     /// Larger jumps still need agreement, but short or anchored partial hits
     /// should move immediately so streaming ASR feels responsive.
     private var recentMatchPositions: [Int] = []
+
+    // Apple SFSpeechRecognizer for speech-to-text (used when SherpaOnnx models not available)
+    private let speechRecognizer: SFSpeechRecognizer? = {
+        SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) ?? SFSpeechRecognizer()
+    }()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
 
     private struct RecoveryAnchorResult {
         let endOffset: Int
@@ -246,6 +254,10 @@ class SpeechRecognizer: ObservableObject {
     }
 
     private func cleanupRecognition() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
         asr.stop()
     }
 
@@ -253,16 +265,8 @@ class SpeechRecognizer: ObservableObject {
         cleanupRecognition()
 
         let currentGeneration = sessionGeneration
-        asr.onTextUpdate = { [weak self] spoken in
-            guard let self, self.sessionGeneration == currentGeneration else { return }
-            self.lastSpokenText = spoken
-            self.matchCharacters(spoken: spoken)
-        }
-        asr.onNewSegment = { [weak self] in
-            guard let self, self.sessionGeneration == currentGeneration else { return }
-            self.matchStartOffset = self.recognizedCharCount
-            self.recentMatchPositions = []
-        }
+
+        // Set up audio level and error callbacks from the audio capture layer
         asr.onLevelUpdate = { [weak self] level in
             self?.audioLevels.append(level)
             if (self?.audioLevels.count ?? 0) > 30 {
@@ -273,6 +277,50 @@ class SpeechRecognizer: ObservableObject {
             guard let self, self.sessionGeneration == currentGeneration else { return }
             self.error = message
             self.isListening = false
+        }
+        asr.onNewSegment = { [weak self] in
+            guard let self, self.sessionGeneration == currentGeneration else { return }
+            self.matchStartOffset = self.recognizedCharCount
+            self.recentMatchPositions = []
+        }
+
+        // Use Apple SFSpeechRecognizer for speech-to-text.
+        // (SherpaOnnx models are placeholders until the user downloads them.)
+        if let recognizer = speechRecognizer, recognizer.isAvailable {
+            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+            guard let request = recognitionRequest else { return }
+            request.shouldReportPartialResults = true
+
+            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, err in
+                guard let self, self.sessionGeneration == currentGeneration else { return }
+
+                if let err = err {
+                    let nsErr = err as NSError
+                    if nsErr.domain != "kAFAssistantErrorDomain" || nsErr.code != 203 {
+                        DispatchQueue.main.async {
+                            self.error = err.localizedDescription
+                        }
+                    }
+                    return
+                }
+
+                if let result = result, !result.isFinal {
+                    let spoken = result.bestTranscription.formattedString
+                    DispatchQueue.main.async {
+                        self.lastSpokenText = spoken
+                        self.matchCharacters(spoken: spoken)
+                    }
+                }
+            }
+
+            // Feed captured audio buffers to the speech recognizer
+            asr.onAudioBuffer = { [weak self] buffer in
+                guard let self, self.sessionGeneration == currentGeneration else { return }
+                self.recognitionRequest?.append(buffer)
+            }
+        } else {
+            error = "Speech recognition is not available. Check your network connection and try again."
+            isListening = false
         }
 
         isListening = true

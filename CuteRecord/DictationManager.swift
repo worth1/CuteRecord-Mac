@@ -114,12 +114,10 @@ class DictationManager: ObservableObject {
             if let result = result, result.isFinal {
                 // Final result — close segment
                 self.committedText += result.bestTranscription.formattedString
-                print("[Dictation] Final: \(result.bestTranscription.formattedString)")
             } else if let result = result {
                 // Partial result
                 let spoken = result.bestTranscription.formattedString
                 let text = self.committedText + spoken
-                print("[Dictation] Partial: \(spoken)")
                 DispatchQueue.main.async {
                     self.onTextUpdate?(text)
                 }

@@ -234,6 +234,13 @@ struct RecordingSettingsView: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .disabled(cameraManager.availableCameras.isEmpty || recordingState.isRecording)
+
+                    if let selected = cameraManager.availableCameras.first(where: { $0.id == cameraManager.selectedCameraID }),
+                       selected.isContinuityCamera {
+                        Text(t("Switch front/back: Mac menu bar camera icon → choose camera"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
                 settingPicker(t("Shape"), selection: $recordingState.cameraOverlayShape) {

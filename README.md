@@ -1,185 +1,146 @@
+<div align="center">
+<br/>
+<p align="center">
+    <a href="https://linux.do" alt="LINUX DO">
+        <img
+            src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
+</p> 
+
 <p align="center">
   <img src="CuteRecord/Assets.xcassets/CuteRecordLogo.imageset/logo.png" alt="CuteRecord Logo" width="128">
 </p>
 
 <h1 align="center">CuteRecord</h1>
 
-
 <p align="center">
-<strong>可爱提词器与摄像头功能的口播录制工具</strong>
+  <strong>为视频录制打造的可爱风提词器 App</strong><br>
+  写稿 → 提词 → 录制 → 导出，一气呵成。
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2013%2B-blue" alt="Platform">
   <img src="https://img.shields.io/badge/language-Swift-orange" alt="Language">
+  <img src="https://img.shields.io/badge/version-1.0.1-pink" alt="Version">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License">
 </p>
 
 ---
 
+## ✨ 为什么选 CuteRecord？
 
-## ✨ 产品简介
+你不需要同时打开提词器 App + OBS + 相机工具。CuteRecord 把**写稿、提词、录制、导出**整合成一个流畅的工作流。
 
-CuteRecord 是一款专为 macOS 打造的口播录制工具，集成专业提词器摄像头录制功能。支持多种比例口播视频录制。
-
-## 🎯 产品优势
-
-|传统录制痛点|CuteRecord 解决方案|
+| 痛点 | CuteRecord 怎么解决 |
 |---|---|
-|录制时对照脚本朗读，操作别扭、画面不自然|适配刘海屏的一体化提词器，贴合摄像头下方布局，朗读视角更自然|
+| 📝 对着镜头忘词 | **灵动岛 / 悬浮窗 / 全屏** 三种提词器模式，眼睛不用离开摄像头 |
+| 🤖 口播稿读起来生硬 | **AI 一键断句** — 自动插入节奏标记和换行 |
+| 🗣️ 提词器跟不上语速 | **实时语音追踪** — 说到哪里高亮到哪里 |
+| 🎬 录屏 + 摄像头 + 麦克风要开三个软件 | **一键录制** — 屏幕、摄像头、声音一次搞定 |
+| 🎀 工具太严肃，没有美感 | **粉色主题 + 猫猫吉祥物** — 录制也可以很可爱 |
 
-## 🚀 核心功能
+---
 
-<img width="422" height="208" alt="截屏2026-06-30 16 17 26" src="https://github.com/user-attachments/assets/45934f34-f8a3-4d67-9f63-dbf9e07a54c0" />
-<img width="713" height="472" alt="截屏2026-06-30 16 20 21" src="https://github.com/user-attachments/assets/d31c9128-f3ea-45c6-ada8-85a79219b548" />
-<img width="430" height="300" alt="IMG_0106" src="https://github.com/user-attachments/assets/74db5c47-0c11-433c-bebd-deb0222075e1" />
+## 🎯 核心功能
 
-<img width="350" height="70" alt="IMG_0107" src="https://github.com/user-attachments/assets/e88f6b18-8f28-40a4-a3e3-4f78a85b3362" />
-<img width="2238" height="1232" alt="472EB7B7-F235-48A0-8448-9BFE0953D648" src="https://github.com/user-attachments/assets/fa248731-a52a-4ad2-aefe-ba9d6835f450" />
+### 📝 脚本编辑器
+- 全功能 Markdown 编辑器
+- 拖入 PPTX 自动提取备注
+- **AI 断句** — 默认 DeepSeek，填个 Key 就能用
+- 语音转文字输入
+- 字数统计 + 阅读时长预估
+- 未保存提示
 
-### 📝 智能脚本编辑器
+### 🎭 三种提词器模式
 
-- 支持完整 Markdown 语法，自带代码高亮显示
-
-### 🎭 多模式提词器
-
-|模式|功能说明|
+| 模式 | 适用场景 |
 |---|---|
-|刘海屏模式|灵动岛风格悬浮弹窗，贴合 MacBook 刘海区域展开，视觉极简|
-|悬浮窗口模式|置顶可拖动悬浮窗，搭配磨砂玻璃特效，不遮挡核心画面|
-|全屏模式|专属全屏提词界面，适配外接显示器，专注朗读录制|
-|跟随光标模式|迷你提词面板，跟随鼠标光标移动，灵活适配操作场景|
-|浏览器模式|任意设备打开网页即可使用，无需安装客户端，便捷远程提词|
+| **灵动岛** | 日常录制，固定屏幕顶部，不占空间 |
+| **悬浮窗** | 任意拖拽、始终置顶、跟随鼠标 |
+| **全屏** | 外接显示器 / Sidecar iPad，专业提词器体验 |
 
-### 🗣️ 智能语音追踪
+### 🗣️ 实时语音追踪
+- **逐词高亮** — 说到哪里亮到哪里，再也不怕跟丢
+- **经典滚动** — 勾速自动滚，简单省心
+- **语音触发** — 说话时滚动，沉默时暂停
+- 中英双语识别，设备端处理
 
-- 实时字词追踪：依托本地语音识别技术，精准高亮当前朗读字词
+### 🎬 一键录制
+- 屏幕 + 系统音频 + 麦克风
+- **圆形摄像头画中画** — 可拖拽、可调整大小
+- **iPhone 连续互通相机** — 用 iPhone 当高清摄像头
+- **3-2-1 倒计时** — 从容开始
 
-- 经典自动滚动：可自定义滚动语速，实现平稳匀速翻页
+### 🎨 可爱风设计
+- 🎀 **粉色主题** — 温暖可爱，录制也开心
+- 🐱 **布偶猫吉祥物** — 空页面也有猫猫陪伴
+- 🔊 **声音反馈** — 录制开始、导出完成都有提示音
 
-- 语音触发控制：静默时自动暂停滚动，发声时自动续读，贴合朗读节奏
+### 🌐 国际化
+- 中英双语界面，一键切换
+- 所有权限提示均已中文化
 
-- 中英双语识别：内置 SherpaOnnx 双语语音模型，全程本地离线运行，无需联网
+---
 
-### 🎬 录制能力
+## ⌨️ 快捷键
 
-- 摄像头录制：圆形悬浮摄像头窗口，支持自由拖动、缩放调整
-
-- 录制预览：提前预览录制效果
-
-- 支持导出：录制完成后支持自定义导出参数配置
-
-### 🤖 AI 脚本优化
-
-- AI 智能优化脚本，自动添加自然换气停顿、语速节奏标记，告别机械朗读感
-
-- 兼容 30\+ 主流 AI 服务商，包含 302\.AI、DeepSeek、OpenAI 兼容接口等
-
-- API 密钥存储于系统钥匙串，全程加密，安全不泄露
-
-- 双模式导出：标记模式（带快速/慢速节奏标记）、纯净模式（仅换行排版）
-
-### 🎬 导演远程控制模式
-
-- 基于 WebSocket 协议实现双向远程控制，实时低延迟交互
-
-- 支持导演/制作人通过浏览器远程实时修改、调整脚本内容
-
-- 采用随机安全密钥验证，保障远程连接安全
-
-- 可实时查看录制者朗读进度，精准把控录制节奏
-
-### 🎨 高度自定义设置
-
-- 人脸背景特效：内置猫眼注视，支持自定义图片，辅助矫正对视镜头视角
-
-- 支持硬件提词设备镜像轴适配，兼容专业录制设备
-
-- 录屏隐藏提词窗口，保护提词内容隐私，仅展示录制画面
-
-### 🌐 双语适配
-
-- 软件界面完整支持简体中文、英文双语切换
-
-- 语音识别模型原生适配中英双语，精准识别混合朗读内容
-
-## 🛠 技术架构
-
-|技术层级|所用技术|
+| 快捷键 | 功能 |
 |---|---|
-|界面开发|SwiftUI \+ AppKit 混合开发|
-|语音识别|Apple 原生语音框架 \+ SherpaOnnx 离线双语 ASR 模型|
-|录制核心|CGDisplayStream、AVAudioEngine、AVCaptureSession|
-|网络通信|Network\.framework（TCP \+ WebSocket 协议）|
-|AI 对接|兼容 OpenAI 接口的多服务商 AI 适配框架|
-|数据存储|文件式加密存储 \+ 文件系统事件监控|
-|并发处理|Swift 异步语法、Combine 响应式框架|
+| `⌘O` | 打开文件夹 |
+| `⌘,` | 设置 |
+| `⌘⌥N` | 新建页面 |
+| `⌘⌥S` | 开始/停止录制 |
+| `⌘⌥P` | 打开提词器 |
+| `⌘⌥D` | 语音转文字 |
 
-## 📦 安装部署
+---
 
-### 运行要求
+## 📦 安装
 
-- 系统版本：macOS 13（Ventura）及以上
+### 系统要求
+- **macOS 13 (Ventura)** 或更高版本
+- Xcode 15+（从源码构建）
 
-- 编译环境：Xcode 15 及以上
-
-### 源码编译步骤
-
+### 从源码构建
 ```bash
 git clone https://github.com/worth01/CuteRecord.git
 cd CuteRecord
 open CuteRecord.xcodeproj
 ```
 
-**注意事项**：项目 Vendor 目录下的 SherpaOnnx 模型文件与动态库为占位文件，如需完整离线语音识别功能，需自行从 SherpaOnnx 官方项目下载完整二进制文件替换。
-
-## ⌨️ 快捷键指南
-
-|快捷键|对应功能|
-|---|---|
-|⌘B|显示/隐藏侧边栏|
-|⌘⌥N|新建脚本页面|
-|⌘⌥S|开始/停止录制|
-|⌘⌥P|打开提词器窗口|
-|⌘⌥D|开启语音听写模式|
-
-## 📁 项目结构
-
-```plain
-CuteRecord/                         # 应用核心源码目录
-├── AI/                             # AI脚本优化引擎与服务商适配目录
-├── Recording/                      # 屏幕、音频、摄像头录制核心流程
-│   ├── Core/                       # 音频、摄像头权限管理与录制引擎
-│   ├── Models/                     # 录制状态、编辑记录、素材数据模型
-│   └── UI/                         # 摄像头悬浮窗口、录制指示器、编辑界面
-├── Setup/                          # 系统权限申请引导流程
-├── Storage/                        # 项目数据加密存储与修复机制
-├── Teleprompter/                   # 提词脚本分词、语音进度匹配核心逻辑
-└── Fonts/                          # 内置开源护眼字体资源
-Tests/RecordingCoreTests/           # 录制核心功能单元测试
-Vendor/                             # 第三方依赖：ASR模型、动态库、框架文件
-```
-
-## 📄 开源协议
-
-CuteRecord 基于 **Apache License 2\.0** 协议开源发布。
-
-## 👨‍💻 开发作者
-
-worth01
-
-## 🙏 致谢
-
-本项目基于 Nolan Lai 开发的 CueRecord 迭代优化而来，感谢原作者提供的优质项目基础。
+> **注意**：`Vendor/` 中的 SherpaOnnx 模型和 dylib 为占位文件。如需完整双语离线 ASR 功能，请从 [SherpaOnnx](https://github.com/k2-fsa/sherpa-onnx) 下载实际模型。语音追踪功能已内置 Apple 语音识别作为回退方案，无需额外配置即可使用。
 
 ---
 
-<div align="center">
-  
-**本工具希望能为口播视频做得更多。**
+## 🏗 项目结构
 
-*如果你觉得有用，点一个 ⭐ Star 是对我最大的鼓励！*
+```text
+CuteRecord/
+├── AI/                    AI 脚本断句 & 提供商目录
+├── Recording/             屏幕/音频/摄像头录制管线
+│   ├── Core/              录制引擎、权限、摄像头管理
+│   ├── Models/            录制状态 & 编辑决策
+│   └── UI/                摄像头叠加层、预览栏、编辑器
+├── Setup/                 权限请求面板
+├── Storage/               工作区项目持久化 & 修复
+├── Teleprompter/          节奏标记分词 & 语音匹配
+├── Resources/             猫猫图片 & 音效
+└── Fonts/                 内置 OpenDyslexic 字体
+```
 
-<img width="50" height="50" alt="logo" src="https://github.com/user-attachments/assets/8a84bf42-f8fe-4a77-9061-5e96a05d37ba" /> 
+---
 
-</div>
+## 📄 开源协议
+
+[Apache License 2.0](LICENSE)
+
+---
+
+## 👨‍💻 作者
+
+**worth01** — 基于 [CueRecord](https://github.com/nolanlai/cuterecord) (by Nolan Lai) 做了大幅改进。
+
+---
+
+<p align="center">
+  <sub>可爱的工具，做精彩的口播视频</sub>
+</p>
