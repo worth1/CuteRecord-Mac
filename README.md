@@ -11,7 +11,7 @@
 
 <p align="center">
   <strong>为视频录制打造的可爱风提词器 App</strong><br>
-  写稿 → 提词 → 录制 → 导出，一气呵成。
+  写稿 → 提词 → 录制 → 导出 一气呵成
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 ---
 
-## ✨ 为什么选 CuteRecord？
+## ✨ 为什么选 CuteRecord
 
 你不需要同时打开提词器 App + OBS + 相机工具。CuteRecord 把**写稿、提词、录制、导出**整合成一个流畅的工作流。
 
@@ -56,18 +56,27 @@
 | **全屏** | 外接显示器 / Sidecar iPad，专业提词器体验 |
 
 ### 🗣️ 实时语音追踪
+<img width="290" height="175" alt="IMG_0106" src="https://github.com/user-attachments/assets/efc1b14a-8933-4d11-8a48-e34c36c562da" />
+
 - **逐词高亮** — 说到哪里亮到哪里，再也不怕跟丢
 - **经典滚动** — 勾速自动滚，简单省心
 - **语音触发** — 说话时滚动，沉默时暂停
 - 中英双语识别，设备端处理
 
 ### 🎬 一键录制
+<img width="380" height="190" alt="截屏2026-06-30 16 17 26" src="https://github.com/user-attachments/assets/5f4f054a-bfcc-42e9-8fa1-95f1d75ba217" />
+
+<img width="260" height="59" alt="IMG_0107" src="https://github.com/user-attachments/assets/ab3fdb51-98fe-45e8-ae54-2f69aa821314" />
+<img width="660" height="340" alt="472EB7B7-F235-48A0-8448-9BFE0953D648" src="https://github.com/user-attachments/assets/7e96e8b5-ba96-4c2f-bafc-e6fda82b3146" />
+
 - 屏幕 + 系统音频 + 麦克风
 - **圆形摄像头画中画** — 可拖拽、可调整大小
 - **iPhone 连续互通相机** — 用 iPhone 当高清摄像头
 - **3-2-1 倒计时** — 从容开始
 
 ### 🎨 可爱风设计
+<img width="490" height="320" alt="截屏2026-07-01 16 04 36" src="https://github.com/user-attachments/assets/d76d0ce0-f797-4dab-9a1c-7dad713dfd31" />
+
 - 🎀 **粉色主题** — 温暖可爱，录制也开心
 - 🐱 **布偶猫吉祥物** — 空页面也有猫猫陪伴
 - 🔊 **声音反馈** — 录制开始、导出完成都有提示音
@@ -134,10 +143,14 @@ CuteRecord/
 
 ## 👨‍💻 作者
 
-**worth01** — 基于 [CueRecord](https://github.com/nolanlai/cuterecord) (by Nolan Lai) 做了大幅改进。
+**worth01** 
+— 基于 [CueRecord](https://github.com/nolanlai/cuterecord) (by Nolan Lai) 做了大幅改进。
 
 ---
 
 <p align="center">
-  <sub>可爱的工具，做精彩的口播视频</sub>
+<sub>可爱的工具，做精彩的口播视频</sub>
+  <p align="center">
+  <img width="50" height="50" alt="6DB80BF3-89FB-41E1-82B6-9C3D6DA8569A_1_201_a" src="https://github.com/user-attachments/assets/19b1e58f-c3b0-49a8-aced-7645e423aa59" />
+</p>
 </p>
