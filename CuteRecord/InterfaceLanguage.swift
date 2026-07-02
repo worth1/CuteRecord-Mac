@@ -156,7 +156,7 @@ final class InterfaceLanguageSettings: ObservableObject {
         "Width": "宽度",
         "Height": "高度",
         "Classic": "经典",
-        "Voice-Activated": "语音触发",
+        "Voice-Activated": "有声识别",
         "Word Tracking": "逐词跟读",
         "Auto-scrolls at a constant speed. No microphone needed.": "以恒定速度自动滚动，不需要麦克风。",
         "Scrolls while you speak, pauses when you're silent.": "说话时滚动，安静时暂停。",

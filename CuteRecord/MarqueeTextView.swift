@@ -231,14 +231,20 @@ struct SpeechScrollView: View {
 
     private func recalcCenter(containerHeight: CGFloat) {
         if smoothScroll {
+            // Continuous scroll: map progress (0..wordCount) linearly to text Y,
+            // independent of individual word positions. This avoids the "jump
+            // between lines" effect that causes bouncing.
             let anchorY = smoothReadLineY(containerHeight: containerHeight)
-            let wordIdx = Int(smoothWordProgress)
-            let fraction = smoothWordProgress - Double(wordIdx)
-            let clampedIdx = max(0, min(wordIdx, words.count - 1))
-            guard let wordY = wordYPositions[clampedIdx] else { return }
-            let nextY = wordYPositions[clampedIdx + 1] ?? wordY
-            let interpolatedY = wordY + (nextY - wordY) * CGFloat(fraction)
-            scrollOffset = anchorY - interpolatedY
+            let progress = smoothWordProgress / Double(max(1, words.count))
+            guard !wordYPositions.isEmpty else {
+                scrollOffset = initialScrollOffset(containerHeight: containerHeight)
+                return
+            }
+            let allY = wordYPositions.values
+            let minY = allY.min() ?? 0
+            let maxY = allY.max() ?? 0
+            let targetY = minY + CGFloat(progress) * (maxY - minY)
+            scrollOffset = anchorY - targetY
         } else {
             // Word-tracking/voice-activated: keep the active line at the configured read position.
             let wordIdx = activeWordIndex()
@@ -389,11 +395,11 @@ struct WordFlowLayout: View {
         // Estimate line height for visibility culling using actual font metrics
         let lineH = ceil(font.ascender - font.descender + font.leading) + lineSpacing
 
-        // Determine visible range of lines
-        let canCull = viewportHeight > 0 && totalLines > 0
-        let buffer: CGFloat = 400
-        let startLine = canCull ? max(0, min(totalLines, Int(floor((-scrollOffset - buffer) / lineH)))) : 0
-        let endLine = canCull ? max(startLine, min(totalLines, Int(ceil((viewportHeight - scrollOffset + buffer) / lineH)))) : totalLines
+        // Render all lines so word positions are always measured.
+        // A teleprompter page is at most a few hundred words — full
+        // rendering has no performance impact and eliminates scroll bounce.
+        let startLine = 0
+        let endLine = totalLines
 
         VStack(alignment: stackAlignment, spacing: lineSpacing) {
             if startLine > 0 {

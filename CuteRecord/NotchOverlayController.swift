@@ -156,6 +156,16 @@ class NotchOverlayController: NSObject {
         }
     }
 
+    /// Explicitly ensure speech recognition is running (for word-tracking mode after recording starts).
+    func ensureSpeechRecognition(text: String) {
+        let settings = NotchSettings.shared
+        guard settings.listeningMode != .classic else { return }
+        guard isShowing else { return }
+        if !speechRecognizer.isListening {
+            speechRecognizer.start(with: text)
+        }
+    }
+
     func updateContent(text: String, hasNextPage: Bool) {
         let normalized = splitTextIntoWords(text)
 
@@ -696,7 +706,7 @@ struct NotchOverlayView: View {
     @State private var isPaused: Bool = false
     @State private var isUserScrolling: Bool = false
     @State private var scrollEnabled: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     // Auto next page countdown
     @State private var countdownRemaining: Int = 0
@@ -861,17 +871,14 @@ struct NotchOverlayView: View {
                     speechRecognizer.stop()
                 }
                 if !hasNextPage {
-                    // Only auto-dismiss in word tracking mode.
-                    // In classic/silence-paused modes the speaker may still be
-                    // talking after the auto-scroll finishes, so keep the text
-                    // visible and let them dismiss manually (X button or Esc).
                     if listeningMode == .wordTracking {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                             speechRecognizer.shouldDismiss = true
                         }
                     }
-                } else if NotchSettings.shared.autoNextPage {
-                    startCountdown()
+                } else {
+                    // Advance immediately — scroll continues seamlessly
+                    speechRecognizer.shouldAdvancePage = true
                 }
             } else {
                 cancelCountdown()
@@ -883,11 +890,11 @@ struct NotchOverlayView: View {
             switch listeningMode {
             case .classic:
                 if !isPaused {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .silencePaused:
                 if !isPaused && speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.12
                 }
             case .wordTracking:
                 break
@@ -965,16 +972,7 @@ struct NotchOverlayView: View {
                     .frame(width: 80, height: 24)
                     .clipped()
 
-                    if listeningMode == .wordTracking {
-                        Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Spacer(minLength: 0)
-                    }
+                    Spacer(minLength: 0)
 
                     if content.pageCount > 1 {
                         if hasNextPage {
@@ -1262,7 +1260,7 @@ struct FloatingOverlayView: View {
     @State private var isPaused: Bool = false
     @State private var isUserScrolling: Bool = false
     @State private var scrollEnabled: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     private var listeningMode: ListeningMode {
         NotchSettings.shared.listeningMode
@@ -1376,8 +1374,9 @@ struct FloatingOverlayView: View {
                             speechRecognizer.shouldDismiss = true
                         }
                     }
-                } else if followingCursor || NotchSettings.shared.autoNextPage {
-                    startCountdown()
+                } else {
+                    // Advance immediately — scroll continues seamlessly
+                    speechRecognizer.shouldAdvancePage = true
                 }
             } else {
                 cancelCountdown()
@@ -1389,11 +1388,11 @@ struct FloatingOverlayView: View {
             switch listeningMode {
             case .classic:
                 if !isPaused {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .silencePaused:
                 if !isPaused && speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.12
                 }
             case .wordTracking:
                 break
@@ -1451,16 +1450,7 @@ struct FloatingOverlayView: View {
                 )
                 .frame(width: 160, height: 24)
 
-                if listeningMode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Spacer()
-                }
+                Spacer()
 
                 if !followingCursor && content.pageCount > 1 {
                     if hasNextPage {

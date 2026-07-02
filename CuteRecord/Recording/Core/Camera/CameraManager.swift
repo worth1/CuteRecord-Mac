@@ -33,6 +33,8 @@ class CameraManager: NSObject, ObservableObject {
     private var refreshWorkItem: DispatchWorkItem?
     private var recordingFrameHandler: ((CameraFrameSample) -> Void)?
     var audioRecordingHandler: ((CMSampleBuffer) -> Void)?
+    /// For speech recognition during recording — shares the same AVCaptureSession audio stream
+    var speechAudioHandler: ((CMSampleBuffer) -> Void)?
     private var captureGeneration: UInt64 = 0
     private var activeCameraID: String?
     private static let firstFrameTimeout: TimeInterval = 4.0
@@ -552,24 +554,27 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         // 处理音频输出
         if let audioOutput = audioOutput, output === audioOutput {
             audioRecordingHandler?(sampleBuffer)
+            speechAudioHandler?(sampleBuffer)
             return
         }
         
         // 处理视频输出
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        
-        // 更新当前帧
-        Task { @MainActor in
-            guard let currentOutput = videoOutput, output === currentOutput else { return }
 
-            let hasRecordingConsumer = recordingFrameHandler != nil
-            let frame = frameBuffer.push(
-                pixelBuffer: pixelBuffer,
-                timestamp: timestamp,
-                enqueue: !hasRecordingConsumer
-            )
-            recordingFrameHandler?(frame)
+        // 更新当前帧 — 仅在录制或有消费者时通过 MainActor 调度
+        let hasRecordingConsumer = recordingFrameHandler != nil
+        let frame = frameBuffer.push(
+            pixelBuffer: pixelBuffer,
+            timestamp: timestamp,
+            enqueue: !hasRecordingConsumer
+        )
+
+        if hasRecordingConsumer {
+            Task { @MainActor [weak self] in
+                guard let self, let currentOutput = videoOutput, output === currentOutput else { return }
+                recordingFrameHandler?(frame)
+            }
         }
     }
     // MARK: - 获取当前摄像头分辨率

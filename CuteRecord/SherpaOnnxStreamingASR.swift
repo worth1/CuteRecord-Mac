@@ -10,6 +10,7 @@ import CoreAudio
 class SherpaOnnxStreamingASR {
     private var audioEngine: AVAudioEngine?
     private var tapFired = false
+    private var startRetryCount = 0
 
     // Callback properties
     var onTextUpdate: ((String) -> Void)?
@@ -22,6 +23,7 @@ class SherpaOnnxStreamingASR {
     var isReady: Bool { true }
 
     func start(selectedMicUID: String) {
+        startRetryCount += 1
         stop()
 
         audioEngine = AVAudioEngine()
@@ -49,20 +51,19 @@ class SherpaOnnxStreamingASR {
             }
             guard let self = self else { return }
 
-            // Forward buffer for speech recognition
+            // Forward buffer for speech recognition (lightweight — just passes the buffer)
             self.onAudioBuffer?(buffer)
 
-            // Compute RMS level
+            // Compute RMS level off the real-time thread
+            let len = Int(buffer.frameLength)
             guard let channelData = buffer.floatChannelData else { return }
             let data = channelData.pointee
-            let len = Int(buffer.frameLength)
             var sum: Float = 0
             for i in 0..<len {
                 let s = data[i]
                 sum += s * s
             }
-            let rms = sqrt(sum / Float(len))
-            let level = CGFloat(min(1.0, rms * 12.0))
+            let level = CGFloat(min(1.0, sqrt(sum / Float(len)) * 12.0))
 
             DispatchQueue.main.async {
                 self.onLevelUpdate?(level)
@@ -73,18 +74,31 @@ class SherpaOnnxStreamingASR {
         do {
             try engine.start()
 
-            // Verify tap fires within 2s
+            // Verify tap fires within 2s; retry up to 2 times if it doesn't.
+            // AVCaptureSession (recording) may briefly block the mic hardware
+            // during startup, causing the tap to miss early audio.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let self, self.audioEngine != nil else { return }
-                if !self.tapFired {
+                if !self.tapFired, self.startRetryCount < 3 {
+                    self.stop()
+                    self.start(selectedMicUID: selectedMicUID)
+                } else if !self.tapFired {
                     DispatchQueue.main.async {
                         self.onError?("Microphone not delivering audio. Check System Settings → Privacy & Security → Microphone.")
                     }
                 }
             }
         } catch {
-            DispatchQueue.main.async {
-                self.onError?("Audio engine failed: \(error.localizedDescription)")
+            guard startRetryCount < 3 else {
+                DispatchQueue.main.async {
+                    self.onError?("Audio engine failed: \(error.localizedDescription)")
+                }
+                return
+            }
+            // Retry after a short delay in case of transient audio hardware unavailability
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                self.start(selectedMicUID: selectedMicUID)
             }
         }
     }
@@ -93,6 +107,11 @@ class SherpaOnnxStreamingASR {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+    }
+
+    /// Call when starting a brand-new recognition session (not a retry).
+    func resetRetryCounter() {
+        startRetryCount = 0
     }
 
     func process(audioBuffer: AVAudioPCMBuffer) -> String? { nil }

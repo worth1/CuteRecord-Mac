@@ -77,6 +77,10 @@ class CircularCameraWindow: NSObject {
         cameraWindow?.frame.size ?? NSSize(width: CameraOverlaySize.medium.size.width, height: CameraOverlaySize.medium.size.height)
     }
 
+    var isOverlayVisible: Bool {
+        cameraWindow?.isVisible == true
+    }
+
     func metadataSnapshot() -> CameraOverlaySnapshot? {
         guard let window = cameraWindow else { return nil }
         return CameraOverlaySnapshot(frame: visibleOverlayFrame(for: window.frame), shape: cameraShape, size: cameraSize)
@@ -484,6 +488,7 @@ struct CameraOverlayView: View {
     @State private var updateTimer = Timer.publish(every: 0.033, on: .main, in: .common).autoconnect() // 30fps
     @State private var currentImage: NSImage?
     @State private var showSizeMenu = false
+    @State private var ciContext = CIContext() // Reused across frames — avoid per-frame GPU context creation
 
     private var roundedShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: roundedCornerRadius, style: .continuous)
@@ -527,6 +532,7 @@ struct CameraOverlayView: View {
         }
         .contentShape(Rectangle())
         .onReceive(updateTimer) { _ in
+            guard windowController?.isOverlayVisible == true else { return }
             updateCameraImage()
         }
     }
@@ -622,8 +628,7 @@ struct CameraOverlayView: View {
         }
         
         // 转换CVPixelBuffer到NSImage
-        let context = CIContext()
-        if let cgImage = context.createCGImage(processedImage.image, from: processedImage.extent) {
+        if let cgImage = ciContext.createCGImage(processedImage.image, from: processedImage.extent) {
             currentImage = NSImage(cgImage: cgImage, size: processedImage.extent.size)
         }
     }

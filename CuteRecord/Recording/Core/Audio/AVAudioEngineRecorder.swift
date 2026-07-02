@@ -14,6 +14,8 @@ class AVAudioEngineRecorder: NSObject, @unchecked Sendable {
     private var _isRecording = false
     private var _sessionStarted = false
     private var _sessionStartHostTime: UInt64 = 0
+    /// Cached audio format description — format never changes, avoids per-buffer CoreMedia allocation
+    private var cachedFormatDescription: CMAudioFormatDescription?
 
     var isRecording: Bool {
         get { lock.withLock { _isRecording } }
@@ -188,23 +190,29 @@ class AVAudioEngineRecorder: NSObject, @unchecked Sendable {
         }
 
         let presentationTime = CMTime(seconds: seconds, preferredTimescale: CMTimeScale(sampleRate))
-        
-        // 创建音频格式描述
-        var formatDescription: CMAudioFormatDescription?
-        var asbd = audioFormat.streamDescription.pointee
-        let fmtStatus = CMAudioFormatDescriptionCreate(
-            allocator: kCFAllocatorDefault,
-            asbd: &asbd,
-            layoutSize: 0,
-            layout: nil,
-            magicCookieSize: 0,
-            magicCookie: nil,
-            extensions: nil,
-            formatDescriptionOut: &formatDescription
-        )
-        
-        guard fmtStatus == noErr, let formatDesc = formatDescription else {
-            return nil
+
+        // 创建音频格式描述（缓存复用，避免每次回调都分配 CoreMedia 对象）
+        let formatDesc: CMAudioFormatDescription
+        if let cached = cachedFormatDescription {
+            formatDesc = cached
+        } else {
+            var formatDescription: CMAudioFormatDescription?
+            var asbd = audioFormat.streamDescription.pointee
+            let fmtStatus = CMAudioFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                asbd: &asbd,
+                layoutSize: 0,
+                layout: nil,
+                magicCookieSize: 0,
+                magicCookie: nil,
+                extensions: nil,
+                formatDescriptionOut: &formatDescription
+            )
+            guard fmtStatus == noErr, let desc = formatDescription else {
+                return nil
+            }
+            cachedFormatDescription = desc
+            formatDesc = desc
         }
         
         // 复制音频数据到新分配的内存块，保持原始非交错布局

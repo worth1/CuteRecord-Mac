@@ -74,7 +74,13 @@ struct ContentView: View {
     @State private var aiScriptStatus: AIScriptGenerationStatus = .idle
     @State private var aiScriptTask: Task<Void, Never>?
     @State private var aiScriptCompletionResetTask: Task<Void, Never>?
-    @State private var showWelcome: Bool = !UserDefaults.standard.bool(forKey: "cuteRecord.welcomeSeen")
+    @State private var showWelcome: Bool = {
+        let seen = UserDefaults.standard.bool(forKey: "cuteRecord.welcomeSeen")
+        guard seen else { return true }
+        let lastVersion = UserDefaults.standard.string(forKey: "cuteRecord.lastWelcomeVersion") ?? ""
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        return lastVersion != currentVersion
+    }()
     @State private var showPermissionAlert = true
     @State private var showMainContent = false
     @State private var permissionRequestWindow = PermissionRequestWindow()
@@ -844,6 +850,8 @@ struct ContentView: View {
             if showWelcome {
                 WelcomeView {
                     UserDefaults.standard.set(true, forKey: "cuteRecord.welcomeSeen")
+                    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+                    UserDefaults.standard.set(currentVersion, forKey: "cuteRecord.lastWelcomeVersion")
                     withAnimation(.easeInOut(duration: 0.3)) {
                         showWelcome = false
                     }
@@ -1005,7 +1013,7 @@ struct ContentView: View {
                     .foregroundStyle(interfaceLanguage.language == .simplifiedChinese ? .white : .secondary)
                     .background(
                         interfaceLanguage.language == .simplifiedChinese
-                            ? Color.accentColor
+                            ? NotchSettings.shared.accentColor.color
                             : Color.clear,
                         in: UnevenRoundedRectangle(
                             topLeadingRadius: 8, bottomLeadingRadius: 8,
@@ -1030,7 +1038,7 @@ struct ContentView: View {
                     .foregroundStyle(interfaceLanguage.language == .english ? .white : .secondary)
                     .background(
                         interfaceLanguage.language == .english
-                            ? Color.accentColor
+                            ? NotchSettings.shared.accentColor.color
                             : Color.clear,
                         in: UnevenRoundedRectangle(
                             topLeadingRadius: 0, bottomLeadingRadius: 0,
@@ -1641,6 +1649,17 @@ struct ContentView: View {
                             }
                         }
                     }
+                    // 逐词跟读：用摄像头音频流做识别，不启动独立的 AVAudioEngine
+                    let speechRecognizer = self.service.overlayController.speechRecognizer
+                    let text = self.service.currentPageText
+                    // 将 AVCaptureSession 的音频同时路由给语音识别
+                    recordingController.cameraManager.speechAudioHandler = { [weak speechRecognizer] sampleBuffer in
+                        speechRecognizer?.feedAudioSampleBuffer(sampleBuffer)
+                    }
+                    // 停止 show() 中启动的 AVAudioEngine，改用录制音频流
+                    speechRecognizer.stop()
+                    speechRecognizer.start(with: text)
+                    speechRecognizer.beginRecognitionFromRecordingAudio()
                     // 提词器窗口创建后，把停止按钮重新带到最前
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         recordingPreviewBarWindow.bringToFront()

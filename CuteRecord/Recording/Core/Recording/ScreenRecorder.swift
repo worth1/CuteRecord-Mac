@@ -304,11 +304,11 @@ class ScreenRecorder: NSObject, ObservableObject {
         
         print("⏹️  停止屏幕录制...")
         
-        // 停止stream
+        // 停止stream（defer 确保即使 stopCapture 抛异常也清理引用）
         if let stream = stream {
+            defer { self.stream = nil }
             try await stream.stopCapture()
         }
-        stream = nil
         
         // 停止AVAudioEngine录制
         avAudioEngineRecorder?.stopRecording()

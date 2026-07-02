@@ -306,31 +306,31 @@ enum MirrorAxis: String, CaseIterable, Identifiable {
 // MARK: - Listening Mode
 
 enum ListeningMode: String, CaseIterable, Identifiable {
-    case wordTracking, classic, silencePaused
+    case silencePaused, wordTracking, classic
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .classic:        return "Classic"
         case .silencePaused:  return "Voice-Activated"
         case .wordTracking:   return "Word Tracking"
+        case .classic:        return "Classic"
         }
     }
 
     var description: String {
         switch self {
-        case .classic:        return "Auto-scrolls at a constant speed. No microphone needed."
         case .silencePaused:  return "Scrolls while you speak, pauses when you're silent."
         case .wordTracking:   return "Tracks each word you say and highlights it in real time."
+        case .classic:        return "Auto-scrolls at a constant speed. No microphone needed."
         }
     }
 
     var icon: String {
         switch self {
-        case .classic:        return "arrow.down.circle"
         case .silencePaused:  return "waveform.circle"
         case .wordTracking:   return "text.word.spacing"
+        case .classic:        return "arrow.down.circle"
         }
     }
 }
@@ -857,7 +857,7 @@ class NotchSettings: ObservableObject {
         let savedScreenID = UserDefaults.standard.integer(forKey: "externalScreenID")
         self.externalScreenID = UInt32(savedScreenID)
         self.mirrorAxis = MirrorAxis(rawValue: UserDefaults.standard.string(forKey: "mirrorAxis") ?? "") ?? .horizontal
-        self.listeningMode = ListeningMode(rawValue: UserDefaults.standard.string(forKey: "listeningMode") ?? "") ?? .wordTracking
+        self.listeningMode = ListeningMode(rawValue: UserDefaults.standard.string(forKey: "listeningMode") ?? "") ?? .silencePaused
         let savedSpeed = UserDefaults.standard.double(forKey: "scrollSpeed")
         self.scrollSpeed = savedSpeed > 0 ? savedSpeed : 3
         self.hideFromScreenShare = UserDefaults.standard.object(forKey: "hideFromScreenShare") as? Bool ?? true

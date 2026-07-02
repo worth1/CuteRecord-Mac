@@ -142,7 +142,7 @@ struct NotchPreviewContent: View {
 
     private let highlightedCount = 42
     @State private var previewWordProgress: Double = 0
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     // Phase 1: corners flatten (0=concave, 1=squared)
     @State private var cornerPhase: CGFloat = 0
@@ -264,7 +264,7 @@ struct NotchPreviewContent: View {
         .onReceive(scrollTimer) { _ in
             guard settings.listeningMode != .wordTracking else { return }
             let wordCount = Double(Self.loremWords.count)
-            previewWordProgress += settings.scrollSpeed * 0.05
+            previewWordProgress += settings.scrollSpeed * 0.1
             if previewWordProgress >= wordCount {
                 previewWordProgress = 0
             }
@@ -971,35 +971,7 @@ struct SettingsView: View {
                 }
             }
 
-            Divider()
-
-            // Pagination
-            Text(t("Pagination"))
-                .font(.system(size: 13, weight: .semibold))
-
-            Toggle(isOn: $settings.autoNextPage) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t("Auto Next Page"))
-                        .font(.system(size: 13, weight: .medium))
-                    Text(t("Automatically advance to the next page after a countdown."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.checkbox)
-
-            if settings.autoNextPage {
-                HStack {
-                    Text(t("Countdown")).font(.system(size: 13))
-                    Spacer()
-                    Picker("", selection: $settings.autoNextPageDelay) {
-                        Text(t("3 seconds")).tag(3)
-                        Text(t("5 seconds")).tag(5)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 160)
-                }
-            }
+            // Pagination section hidden — auto-advance is always on
 
             Spacer()
         }
@@ -1429,7 +1401,7 @@ struct SettingsView: View {
         settings.externalDisplayMode = .off
         settings.externalScreenID = 0
         settings.mirrorAxis = .horizontal
-        settings.listeningMode = .wordTracking
+        settings.listeningMode = .silencePaused
         settings.scrollSpeed = 3
         settings.showElapsedTime = true
         settings.selectedMicUID = ""

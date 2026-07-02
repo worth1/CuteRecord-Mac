@@ -89,6 +89,11 @@ nonisolated func splitTextIntoWords(_ text: String) -> [String] {
                     latinBuffer = ""
                 }
                 result.append(String(char))
+            } else if !char.isLetter && !char.isNumber && latinBuffer.isEmpty {
+                // Punctuation immediately after CJK (e.g. "，AI"): split it off
+                // so CJK punctuation doesn't get rendered with a Latin font that
+                // may lack the glyph, causing missing-glyph dots.
+                result.append(String(char))
             } else {
                 latinBuffer.append(char)
             }

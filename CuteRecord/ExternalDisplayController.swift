@@ -117,7 +117,7 @@ struct ExternalDisplayView: View {
     @State private var timerWordProgress: Double = 0
     @State private var isUserScrolling: Bool = false
     @State private var scrollEnabled: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     private var listeningMode: ListeningMode {
         NotchSettings.shared.listeningMode
@@ -210,10 +210,10 @@ struct ExternalDisplayView: View {
             let speed = NotchSettings.shared.scrollSpeed // words per second
             switch listeningMode {
             case .classic:
-                timerWordProgress += speed * 0.05
+                timerWordProgress += speed * 0.1
             case .silencePaused:
                 if speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.12
                 }
             case .wordTracking:
                 break
@@ -274,16 +274,7 @@ struct ExternalDisplayView: View {
                     )
                     .frame(width: 240, height: 32)
 
-                    if listeningMode == .wordTracking {
-                        Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(5).joined(separator: " "))
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Spacer()
-                    }
+                    Spacer()
 
                     if listeningMode != .classic {
                         Button {
