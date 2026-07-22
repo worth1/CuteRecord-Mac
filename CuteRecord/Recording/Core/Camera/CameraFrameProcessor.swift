@@ -138,4 +138,37 @@ enum CameraFrameProcessor {
 
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
+
+    /// Quick check: does the frame have any non-black pixels?
+    /// Used to detect whether the camera has stabilized after startup.
+    static func hasMeaningfulContent(_ pixelBuffer: CVPixelBuffer) -> Bool {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        guard width > 0, height > 0 else { return false }
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA
+        else { return true } // unknown format, assume content exists
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return true }
+        let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let step = max(1, min(width, height) / 40)
+        var brightCount = 0
+        var sampleCount = 0
+
+        for y in stride(from: 0, to: height, by: step) {
+            for x in stride(from: 0, to: width, by: step) {
+                sampleCount += 1
+                let offset = y * bytesPerRow + x * 4
+                let r = Int(bytes[offset + 2])
+                let g = Int(bytes[offset + 1])
+                let b = Int(bytes[offset])
+                if max(r, g, b) > 20 { brightCount += 1 }
+            }
+        }
+        // At least 5% of sampled pixels should be non-black
+        return sampleCount > 0 && Double(brightCount) / Double(sampleCount) > 0.05
+    }
 }

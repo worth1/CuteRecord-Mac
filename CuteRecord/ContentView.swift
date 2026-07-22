@@ -4,6 +4,7 @@
 //
 //
 
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 import CoreImage.CIFilterBuiltins
@@ -54,6 +55,47 @@ private enum AIScriptGenerationStatus {
     }
 }
 
+// MARK: - Script History
+
+struct ScriptHistoryEntry: Codable, Identifiable {
+    var id = UUID()
+    let text: String
+    let timestamp: Date
+    var preview: String { String(text.prefix(25)).replacingOccurrences(of: "\n", with: " ") }
+}
+
+struct ScriptHistoryStore {
+    private static let key = "ScriptHistory_v1"
+    static let maxEntries = 10
+
+    static func load() -> [ScriptHistoryEntry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let entries = try? JSONDecoder().decode([ScriptHistoryEntry].self, from: data)
+        else { return [] }
+        return entries
+    }
+
+    static func save(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var entries = load()
+        entries.removeAll { $0.text == trimmed }
+        entries.insert(ScriptHistoryEntry(text: trimmed, timestamp: Date()), at: 0)
+        if entries.count > maxEntries { entries = Array(entries.prefix(maxEntries)) }
+        if let data = try? JSONEncoder().encode(entries) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func delete(id: UUID) {
+        var entries = load()
+        entries.removeAll { $0.id == id }
+        if let data = try? JSONEncoder().encode(entries) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject private var service = CuteRecordService.shared
     @ObservedObject private var recordingController = RecordingController.shared
@@ -83,7 +125,33 @@ struct ContentView: View {
     }()
     @State private var showPermissionAlert = true
     @State private var showMainContent = false
+    @State private var userCancelledPermissions = false
     @State private var permissionRequestWindow = PermissionRequestWindow()
+    @State private var antiGlareWindows: [NSWindow] = []
+    @State private var networkCameraIP: String = UserDefaults.standard.string(forKey: "networkCameraIP") ?? ""
+    @State private var recordingMode: RecordingMode = {
+        if let raw = UserDefaults.standard.string(forKey: "recordingMode"),
+           let mode = RecordingMode(rawValue: raw) { return mode }
+        return .default
+    }()
+
+    enum RecordingMode: String, CaseIterable, Identifiable {
+        case `default`   // 完整录制
+        case teleprompter // 仅提词器
+        case phone       // 手机录制
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .default:      return "MAC录制"
+            case .teleprompter: return "提词器"
+            case .phone:        return "手机录制"
+            }
+        }
+        var localizedLabel: String {
+            InterfaceLanguageSettings.shared.text(label)
+        }
+    }
     @State private var recordingPreviewBarWindow = RecordingPreviewBarWindow()
     @State private var recordingEditorWindow = RecordingEditorWindow()
     @State private var hidesMainUIForRecordingPreview = false
@@ -93,6 +161,8 @@ struct ContentView: View {
     @State private var editingProjectTitleText = ""
     @State private var editingPageTitleIndex: Int?
     @State private var editingPageTitleText = ""
+    @State private var scriptTab = 0  // 0=编辑, 1=历史
+    @State private var scriptHistory: [ScriptHistoryEntry] = []
     @State private var hoveredProjectURL: URL?
     @State private var hoveredMarkdownURL: URL?
     @FocusState private var isTextFocused: Bool
@@ -525,12 +595,8 @@ struct ContentView: View {
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(.primary)
                     .focused($focusedPageTitleIndex, equals: index)
-                    .onSubmit {
-                        finishRenamingPage()
-                    }
-                    .onExitCommand {
-                        cancelRenamingPage()
-                    }
+                    .onSubmit { finishRenamingPage() }
+                    .onExitCommand { cancelRenamingPage() }
             } else {
                 Text(service.pageTitle(at: index))
                     .font(.system(size: 22, weight: .bold))
@@ -538,9 +604,7 @@ struct ContentView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        beginRenamingPage(at: index)
-                    }
+                    .onTapGesture(count: 2) { beginRenamingPage(at: index) }
             }
 
             if hasUnsavedChanges {
@@ -550,6 +614,30 @@ struct ContentView: View {
                     .padding(.top, 5)
                     .help("Unsaved changes")
             }
+
+            Spacer()
+
+            // Capsule tab buttons — matching recording preview bar style
+            HStack(spacing: 6) {
+                Button { scriptTab = 0 } label: {
+                    Text("编辑")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(scriptTab == 0 ? .white : .primary)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(scriptTab == 0 ? Color.accentColor : Color.primary.opacity(0.08),
+                                    in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { scriptTab = 1 } label: {
+                    Text("历史")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(scriptTab == 1 ? .white : .primary)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(scriptTab == 1 ? Color.accentColor : Color.primary.opacity(0.08),
+                                    in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
@@ -557,12 +645,86 @@ struct ContentView: View {
         .padding(.bottom, 6)
     }
 
+    private var historyListView: some View {
+        VStack(spacing: 0) {
+            if scriptHistory.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("暂无历史记录")
+                        .font(.system(size: 15))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("输入脚本后点击「下一步」,")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary.opacity(0.35))
+                    Text("将自动保存在这里")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary.opacity(0.35))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, 40)
+            } else {
+                List {
+                    ForEach(scriptHistory) { entry in
+                        Button {
+                            let pageText = entry.text
+                            if service.currentPageIndex < service.pages.count {
+                                service.pages[service.currentPageIndex] = pageText
+                            } else {
+                                service.pages.append(pageText)
+                            }
+                            service.overlayController.speechRecognizer.updateText(pageText, preservingCharCount: 0)
+                            scriptTab = 0
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(entry.preview)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                Text(formatHistoryDate(entry.timestamp))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .onDelete { idx in
+                        for i in idx {
+                            if i < scriptHistory.count {
+                                ScriptHistoryStore.delete(id: scriptHistory[i].id)
+                            }
+                        }
+                        scriptHistory = ScriptHistoryStore.load()
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .onAppear { scriptHistory = ScriptHistoryStore.load() }
+    }
+
+    private func formatHistoryDate(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            fmt.dateFormat = "HH:mm"; return "今天 " + fmt.string(from: date)
+        } else if Calendar.current.isDateInYesterday(date) {
+            fmt.dateFormat = "HH:mm"; return "昨天 " + fmt.string(from: date)
+        } else {
+            fmt.dateFormat = "MM/dd HH:mm"; return fmt.string(from: date)
+        }
+    }
+
     private var mainContent: some View {
         VStack(spacing: 0) {
             pageTitleHeader
             Divider()
 
-            ZStack(alignment: .topTrailing) {
+            if scriptTab == 1 {
+                historyListView
+            } else {
+                ZStack(alignment: .topTrailing) {
                 HighlightingTextEditor(
                     text: currentText,
                     font: .systemFont(ofSize: 16, weight: .regular).rounded,
@@ -671,6 +833,7 @@ struct ContentView: View {
                             .allowsHitTesting(false)
                     }
                 }
+            }
             }
 
             // Toolbar — sits above the recording button, separated from editor text
@@ -849,17 +1012,13 @@ struct ContentView: View {
         Group {
             if showWelcome {
                 WelcomeView {
-                    UserDefaults.standard.set(true, forKey: "cuteRecord.welcomeSeen")
-                    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-                    UserDefaults.standard.set(currentVersion, forKey: "cuteRecord.lastWelcomeVersion")
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        showWelcome = false
+                        UserDefaults.standard.set(true, forKey: "cuteRecord.welcomeSeen")
+                        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+                        UserDefaults.standard.set(currentVersion, forKey: "cuteRecord.lastWelcomeVersion")
+                        withAnimation(.easeInOut(duration: 0.3)) { showWelcome = false }
+                        if service.vaultURL == nil { service.createSampleWorkspace() }
                     }
-                    // Create sample workspace on first launch
-                    if service.vaultURL == nil {
-                        service.createSampleWorkspace()
-                    }
-                }
+                    .frame(width: 460)
             } else if NotchSettings.shared.directorModeEnabled {
                 directorOverlay
             } else if shouldShowVaultPicker {
@@ -949,6 +1108,37 @@ struct ContentView: View {
             if show {
                 showPermissionRequestIfNeeded()
             }
+        }
+        .onChange(of: recordingController.isRecording) { _, recording in
+            if recording {
+                // Show full-screen anti-glare gray overlay on all screens
+                var windows: [NSWindow] = []
+                for screen in NSScreen.screens {
+                    let panel = NSPanel(
+                        contentRect: screen.frame,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered,
+                        defer: false
+                    )
+                    panel.isOpaque = false
+                    panel.backgroundColor = NSColor(white: 0.0, alpha: 1.0)
+                    panel.hasShadow = false
+                    panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
+                    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+                    panel.ignoresMouseEvents = true
+                    panel.orderFront(nil)
+                    windows.append(panel)
+                }
+                antiGlareWindows = windows
+            } else {
+                for window in antiGlareWindows {
+                    window.orderOut(nil)
+                }
+                antiGlareWindows = []
+            }
+        }
+        .onChange(of: recordingMode) { _, mode in
+            UserDefaults.standard.set(mode.rawValue, forKey: "recordingMode")
         }
         .onDisappear {
             if !hidesMainUIForRecordingPreview {
@@ -1550,12 +1740,17 @@ struct ContentView: View {
     private func presentRecordingPreview() {
         isTextFocused = false
 
-        recordingController.refreshDevicesAndPermissions()
-        recordingController.beginPreview()
+        // Auto-save current page to script history
+        if service.currentPageIndex < service.pages.count {
+            ScriptHistoryStore.save(text: service.pages[service.currentPageIndex])
+        }
+
         hideMainUIForRecordingPreview()
         showPromptForRecordingPreview()
         recordingPreviewBarWindow.show(
             controller: recordingController,
+            recordingMode: $recordingMode,
+            networkCameraIP: $networkCameraIP,
             onStart: {
                 startRecordedTeleprompterFromPreview()
             },
@@ -1568,19 +1763,28 @@ struct ContentView: View {
     // 新的录制流程：显示预览条，用户配置后点击 Start 进入倒计时
     private func presentRecordingPreviewWithCountdown() {
         isTextFocused = false
-        
+
+        // Auto-save current page to script history
+        if service.currentPageIndex < service.pages.count {
+            ScriptHistoryStore.save(text: service.pages[service.currentPageIndex])
+        }
+
         // 准备录制输出
         prepareRecordingOutputName()
-        
-        // 显示预览框
-        recordingController.refreshDevicesAndPermissions()
-        recordingController.beginPreview()
+
+        // 显示预览框（手机模式不启动本地摄像头）
+        if recordingMode != .phone {
+            recordingController.refreshDevicesAndPermissions()
+            recordingController.beginPreview()
+        }
         hideMainUIForRecordingPreview()
         showPromptForRecordingPreview()
         
         // 显示预览栏，用户点击 Start 后直接开始录制
         recordingPreviewBarWindow.show(
             controller: recordingController,
+            recordingMode: $recordingMode,
+            networkCameraIP: $networkCameraIP,
             onStart: {
                 self.recordingPreviewBarWindow.hide()
                 self.startRecordedTeleprompterFromPreview()
@@ -1593,51 +1797,97 @@ struct ContentView: View {
 
     private func startRecordedTeleprompterFromPreview() {
         isTextFocused = false
-        prepareRecordingOutputName()
         let shouldShowTeleprompter = currentPageHasContent
 
-        // Show 3-2-1 countdown before recording starts
-        Task {
-            await showRecordingCountdown()
-            SoundPlayer.play("match")
+        // 提词器模式：不录制，只显示提词器 + 预览框
+        guard recordingMode != .teleprompter else {
+            if shouldShowTeleprompter { _ = run() }
+            recordingPreviewBarWindow.showStopButton(
+                controller: recordingController,
+                onStop: {
+                    self.recordingPreviewBarWindow.hide()
+                    self.stop()
+                    self.hidePromptForRecordingPreview()
+                    self.restoreMainUIAfterRecordingPreview(focusEditor: false)
+                }
+            )
+            return
+        }
 
-            await recordingController.startSimpleRecording()
-            
+        prepareRecordingOutputName()
+
+        // Countdown is now shown on the Start button itself
+        Task {
+            SoundPlayer.play("match")
+            switch recordingMode {
+            case .phone:
+                await recordingController.startNetworkRecording()
+            default:
+                await recordingController.startSimpleRecording()
+            }
+
+            if !recordingController.isRecording, let err = recordingController.lastError {
+                print("❌ 录制启动失败: \(err)")
+            }
+
             if recordingController.isRecording {
                 // 录制启动成功
                 recordingPreviewBarWindow.showStopButton(
                     controller: recordingController,
-                    onStop: {
-                        Task {
-                            // 停止录制
-                            let outputURL = await recordingController.stopSimpleRecordingAndGetOutput()
-                            // 隐藏提词器和停止按钮
-                            self.recordingPreviewBarWindow.hide()
-                            self.stop()
-                            self.hidePromptForRecordingPreview()
-                            
-                            // 打开编辑器窗口
-                            if let outputURL {
-                                self.presentRecordedTakeEditor(for: CapturedRecordingOutput(
-                                    outputURL: outputURL,
-                                    cameraURL: nil,
-                                    overlayMetadataURL: nil
-                                ))
-                            } else {
-                                self.restoreMainUIAfterRecordingPreview(focusEditor: false)
+                    onStop: { [self] in
+                        if recordingMode == .phone {
+                            recordingController.stopNetworkRecording()
+                            recordingPreviewBarWindow.hide()
+                            stop()
+                            hidePromptForRecordingPreview()
+                            restoreMainUIAfterRecordingPreview(focusEditor: false)
+                        } else {
+                            Task {
+                                let outputURL = await recordingController.stopSimpleRecordingAndGetOutput()
+                                recordingPreviewBarWindow.hide()
+                                stop()
+                                hidePromptForRecordingPreview()
+                                if let outputURL {
+                                    presentRecordedTakeEditor(for: CapturedRecordingOutput(
+                                        outputURL: outputURL, cameraURL: nil, overlayMetadataURL: nil))
+                                } else {
+                                    restoreMainUIAfterRecordingPreview(focusEditor: false)
+                                }
                             }
                         }
                     }
                 )
 
-                if shouldShowTeleprompter {
+                if recordingMode == .phone {
+                    let nc = recordingController.networkCamera
+                    let speed = NotchSettings.shared.scrollSpeed
+                    nc.sendCommand("s:\(speed)")
+                    // Send all pages at once; phone handles page advance locally
+                    let allPages = service.pages
+                    let joined = allPages.joined(separator: "\n===\n")
+                    nc.sendCommand("A:" + joined)
+                    nc.sendCommand("P:\(service.currentPageIndex)")
+                    // Every 0.3s sync only page index + progress
+                    Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { timer in
+                        guard recordingController.isRecording else { timer.invalidate(); return }
+                        nc.sendCommand("P:\(service.currentPageIndex)")
+                        let total = max(1, service.currentPageText.count)
+                        let sr = service.overlayController.speechRecognizer
+                        let p = sr.isListening
+                            ? min(1.0, Double(sr.recognizedCharCount) / Double(total)) : 0
+                        nc.sendCommand("p:\(String(format: "%.3f", p))")
+                    }
+                }
+
+                // 手机+前置：Mac 不显示提词器，手机屏幕上看
+                let showMacTeleprompter = shouldShowTeleprompter
+                    && !(recordingMode == .phone && recordingController.networkCameraPosition == .front)
+                if showMacTeleprompter {
                     if !run() {
-                        // 提词器启动失败，直接停止录制并打开编辑器
                         Task {
                             let outputURL = await recordingController.stopSimpleRecordingAndGetOutput()
                             self.recordingPreviewBarWindow.hide()
                             self.hidePromptForRecordingPreview()
-                            
                             if let outputURL {
                                 self.presentRecordedTakeEditor(for: CapturedRecordingOutput(
                                     outputURL: outputURL,
@@ -1649,25 +1899,24 @@ struct ContentView: View {
                             }
                         }
                     }
-                    // 逐词跟读：用摄像头音频流做识别，不启动独立的 AVAudioEngine
-                    let speechRecognizer = self.service.overlayController.speechRecognizer
-                    let text = self.service.currentPageText
-                    // 将 AVCaptureSession 的音频同时路由给语音识别
-                    recordingController.cameraManager.speechAudioHandler = { [weak speechRecognizer] sampleBuffer in
-                        speechRecognizer?.feedAudioSampleBuffer(sampleBuffer)
-                    }
-                    // 停止 show() 中启动的 AVAudioEngine，改用录制音频流
-                    speechRecognizer.stop()
-                    speechRecognizer.start(with: text)
-                    speechRecognizer.beginRecognitionFromRecordingAudio()
-                    // 提词器窗口创建后，把停止按钮重新带到最前
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        recordingPreviewBarWindow.bringToFront()
-                    }
                 } else {
+                    // 手机+前置：隐藏 Mac 提词器窗口，但保持录制状态
                     hidePromptForRecordingPreview()
-                    service.readPages.removeAll()
-                    isRunning = false
+                }
+
+                // 逐词跟读（手机前置时仍需音频识别）
+                let speechRecognizer = self.service.overlayController.speechRecognizer
+                let text = self.service.currentPageText
+                recordingController.cameraManager.speechAudioHandler = { [weak speechRecognizer] sampleBuffer in
+                    speechRecognizer?.feedAudioSampleBuffer(sampleBuffer)
+                }
+                speechRecognizer.stop()
+                speechRecognizer.start(with: text)
+                speechRecognizer.beginRecognitionFromRecordingAudio()
+
+                // 提词器窗口创建后，把停止按钮重新带到最前
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    recordingPreviewBarWindow.bringToFront()
                 }
             } else {
                 // 录制启动失败
@@ -1686,11 +1935,12 @@ struct ContentView: View {
     }
 
     private func showPermissionRequestIfNeeded() {
+        guard !userCancelledPermissions else { return }
         Task {
             await recordingController.permissionsManager.checkAllPermissions()
             let pm = recordingController.permissionsManager
-            // 检查所有需要的权限：屏幕录制、麦克风、摄像头
-            let needsPermissions = !pm.screenRecordingAuthorized || !pm.microphoneAuthorized || !pm.cameraAuthorized
+            // 检查所有需要的权限：麦克风、摄像头
+            let needsPermissions = !pm.microphoneAuthorized || !pm.cameraAuthorized
 
             guard needsPermissions else {
                 recordingController.showPermissionRequest = false
@@ -1712,8 +1962,8 @@ struct ContentView: View {
                 onRequestFileAccess: {
                     requestFileAccessForPermissions()
                 },
-                onComplete: { [weak recordingController] in
-                    recordingController?.showPermissionRequest = false
+                onComplete: {
+                    recordingController.showPermissionRequest = false
                     showPermissionAlert = false
                     showMainContent = true
                     // 恢复主窗口
@@ -1721,20 +1971,15 @@ struct ContentView: View {
                         window.makeKeyAndOrderFront(nil)
                     }
                 },
-                onCancel: { [weak recordingController, weak service = CuteRecordService.shared] in
-                    // 用户取消授权：清理资源，依次关闭弹窗和主界面，优雅退出
-                    recordingController?.stopRecording()
-                    service?.saveFile()
+                onCancel: {
+                    // 用户取消授权：清理资源，关闭弹窗，弃用 App
+                    UserDefaults.standard.set(true, forKey: "cuteRecord.welcomeSeen")
+                    userCancelledPermissions = true
+                    recordingController.showPermissionRequest = false
                     permissionRequestWindow.dismiss()
-                    // 关闭主界面窗口（NavigationSplitView）
-                    for window in NSApp.windows where !(window is NSPanel) {
-                        window.orderOut(nil)
-                        window.close()
-                    }
-                    // 延迟退出，确保所有窗口关闭和资源清理完成，防止崩溃
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        NSApp.terminate(nil)
-                    }
+                    showWelcome = false
+                    showPermissionAlert = false
+                    NSApp.terminate(nil)
                 }
             )
         }
@@ -1742,13 +1987,18 @@ struct ContentView: View {
 
     private func requestFileAccessForPermissions() {
         let panel = NSOpenPanel()
-        panel.title = "选择 CuteRecord 工作区"
-        panel.prompt = "选择"
+        panel.title = "选择录制文件保存位置"
+        panel.message = "请选择一个文件夹用于保存录制的视频文件"
+        panel.prompt = "选择此文件夹"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = service.vaultURL
+        if let vaultURL = service.vaultURL {
+            panel.directoryURL = vaultURL
+        } else {
+            panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        }
         panel.level = .floating
 
         NSApp.activate(ignoringOtherApps: true)
@@ -1942,44 +2192,6 @@ struct ContentView: View {
         }
     }
 
-    @MainActor
-    private func showRecordingCountdown() async {
-        guard let screen = NSScreen.main else { return }
-        let size: CGFloat = 200
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: size, height: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .screenSaver
-        panel.center()
-        panel.orderFrontRegardless()
-
-        for count in (1...3).reversed() {
-            let hostView = NSHostingView(rootView: CountdownView(count: count))
-            hostView.frame = NSRect(x: 0, y: 0, width: size, height: size)
-            panel.contentView = hostView
-            panel.alphaValue = 0
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0.12
-            panel.animator().alphaValue = 1
-            NSAnimationContext.endGrouping()
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0.08
-            panel.animator().alphaValue = 0
-            NSAnimationContext.endGrouping()
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-
-        panel.orderOut(nil)
-        panel.close()
-    }
-
     private func prepareRecordingOutputName() {
         recordingController.recordingState.outputSessionName = service.currentRecordingSessionName()
         if let projectDirectoryURL = service.currentProjectDirectoryURL() {
@@ -2061,17 +2273,5 @@ struct RecordGlyph: View {
             .scaledToFit()
             .frame(width: outerDiameter, height: outerDiameter)
             .foregroundStyle(.white)
-    }
-}
-
-// MARK: - 倒计时视图
-struct CountdownView: View {
-    let count: Int
-    
-    var body: some View {
-        Text("\(count)")
-            .font(.system(size: 120, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.5), radius: 10)
     }
 }

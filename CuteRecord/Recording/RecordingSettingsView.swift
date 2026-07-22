@@ -223,10 +223,11 @@ struct RecordingSettingsView: View {
                         .frame(width: 54, alignment: .leading)
 
                     Picker("", selection: $cameraManager.selectedCameraID) {
-                        if cameraManager.availableCameras.isEmpty {
+                        let builtInCameras = cameraManager.availableCameras.filter { !$0.isContinuityCamera }
+                        if builtInCameras.isEmpty {
                             Text(t("No Camera")).tag("")
                         } else {
-                            ForEach(cameraManager.availableCameras) { camera in
+                            ForEach(builtInCameras) { camera in
                                 Text(camera.name).tag(camera.id)
                             }
                         }
@@ -234,13 +235,6 @@ struct RecordingSettingsView: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .disabled(cameraManager.availableCameras.isEmpty || recordingState.isRecording)
-
-                    if let selected = cameraManager.availableCameras.first(where: { $0.id == cameraManager.selectedCameraID }),
-                       selected.isContinuityCamera {
-                        Text(t("Switch front/back: Mac menu bar camera icon → choose camera"))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
                 }
 
                 settingPicker(t("Shape"), selection: $recordingState.cameraOverlayShape) {

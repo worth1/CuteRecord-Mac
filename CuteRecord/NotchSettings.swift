@@ -565,7 +565,6 @@ struct TeleprompterBackdropView: View {
 
 // MARK: - Settings
 
-// @Observable
 class NotchSettings: ObservableObject {
     static let shared = NotchSettings()
     private static let customBackgroundImageBookmarkKey = "customBackgroundImageBookmark"

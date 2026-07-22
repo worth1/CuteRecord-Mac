@@ -5,15 +5,21 @@
 //
 
 import AppKit
+import SwiftUI
 
 class UpdateChecker {
     static let shared = UpdateChecker()
+    private let cutePanel = CutePanel()
 
     private let repoOwner = "worth01"
     private let repoName = "CuteRecord"
 
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+    }
+
+    private func uiText(_ english: String) -> String {
+        InterfaceLanguageSettings.shared.text(english)
     }
 
     /// Check GitHub for the latest release and prompt the user if an update is available.
@@ -110,35 +116,104 @@ class UpdateChecker {
     // MARK: - Alerts
 
     private func showUpdateAvailable(latestVersion: String, releaseURL: String) {
-        let alert = NSAlert()
-        alert.messageText = uiText("Update Available")
-        alert.informativeText = InterfaceLanguageSettings.shared.format("CuteRecord %@ is available. You are currently running %@.", latestVersion, currentVersion)
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: uiText("Download"))
-        alert.addButton(withTitle: uiText("Later"))
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            if let url = URL(string: releaseURL) {
-                NSWorkspace.shared.open(url)
-            }
-        }
+        cutePanel.show(
+            UpdateAlertView(
+                title: uiText("Update Available"),
+                message: InterfaceLanguageSettings.shared.format("CuteRecord %@ is available. You are currently running %@.", latestVersion, currentVersion),
+                primaryButton: uiText("Download"),
+                secondaryButton: uiText("Later"),
+                onPrimary: {
+                    self.cutePanel.dismiss()
+                    if let url = URL(string: releaseURL) { NSWorkspace.shared.open(url) }
+                },
+                onSecondary: { self.cutePanel.dismiss() }
+            )
+            .cutePanelStyle(),
+            width: 380, height: 180
+        )
     }
 
     private func showUpToDate() {
-        let alert = NSAlert()
-        alert.messageText = uiText("You're Up to Date")
-        alert.informativeText = InterfaceLanguageSettings.shared.format("CuteRecord %@ is the latest version.", currentVersion)
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: uiText("OK"))
-        alert.runModal()
+        cutePanel.show(
+            UpdateAlertView(
+                title: uiText("You're Up to Date"),
+                message: InterfaceLanguageSettings.shared.format("CuteRecord %@ is the latest version.", currentVersion),
+                primaryButton: uiText("OK"),
+                secondaryButton: nil,
+                onPrimary: { self.cutePanel.dismiss() },
+                onSecondary: {}
+            )
+            .cutePanelStyle(),
+            width: 380, height: 180
+        )
     }
 
     private func showError(_ message: String) {
-        let alert = NSAlert()
-        alert.messageText = uiText("Update Check Failed")
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: uiText("OK"))
-        alert.runModal()
+        cutePanel.show(
+            UpdateAlertView(
+                title: uiText("Update Check Failed"),
+                message: message,
+                primaryButton: uiText("OK"),
+                secondaryButton: nil,
+                onPrimary: { self.cutePanel.dismiss() },
+                onSecondary: {}
+            )
+            .cutePanelStyle(),
+            width: 380, height: 180
+        )
+    }
+}
+
+// MARK: - Update Alert View
+
+private struct UpdateAlertView: View {
+    let title: String
+    let message: String
+    let primaryButton: String
+    let secondaryButton: String?
+    let onPrimary: () -> Void
+    let onSecondary: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.title3)
+                .fontWeight(.semibold)
+                .padding(.top, 24)
+                .padding(.bottom, 8)
+
+            Text(message)
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+                .padding(.bottom, 20)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                if let secondary = secondaryButton {
+                    Button(action: onSecondary) {
+                        Text(secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+
+                    Divider()
+                }
+
+                Button(action: onPrimary) {
+                    Text(primaryButton)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+            }
+            .frame(height: 44)
+        }
     }
 }

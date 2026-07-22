@@ -9,7 +9,6 @@ import Foundation
 import AVFoundation
 import CoreAudio
 import Combine
-import Speech
 
 struct AudioInputDevice: Identifiable, Hashable {
     let id: AudioDeviceID
@@ -92,20 +91,12 @@ class SpeechRecognizer: ObservableObject {
     @Published var shouldDismiss: Bool = false
     @Published var shouldAdvancePage: Bool = false
 
-    /// True when recent audio levels indicate the user is actively speaking.
-    /// Uses hysteresis: once speaking, requires level to drop further before
-    /// deciding the user has stopped. Prevents rapid on/off oscillation.
-    private var _speaking: Bool = false
+    /// True when recent audio levels indicate the user is actively speaking
     var isSpeaking: Bool {
         let recent = audioLevels.suffix(10)
         guard !recent.isEmpty else { return false }
         let avg = recent.reduce(0, +) / CGFloat(recent.count)
-        if _speaking {
-            _speaking = avg > 0.04  // lower threshold to stop
-        } else {
-            _speaking = avg > 0.08  // higher threshold to start
-        }
-        return _speaking
+        return avg > 0.08
     }
 
     private let asr = SherpaOnnxStreamingASR()
@@ -117,21 +108,11 @@ class SpeechRecognizer: ObservableObject {
     /// Larger jumps still need agreement, but short or anchored partial hits
     /// should move immediately so streaming ASR feels responsive.
     private var recentMatchPositions: [Int] = []
-    private var matchCallbackCount: Int = 0
-    /// Tracks consecutive callbacks with no forward progress to detect stuck state
-    private var consecutiveNoProgressCount: Int = 0
 
-    // Tokenization cache to avoid re-splitting source text every callback
-    private var cachedRemainingSource: String = ""
-    private var cachedSourceWords: [String] = []
-    private var cachedSourceTokens: [(normalized: String, endOffset: Int, isAnnotation: Bool)] = []
-
-    // Apple SFSpeechRecognizer for speech-to-text (used when SherpaOnnx models not available)
-    private let speechRecognizer: SFSpeechRecognizer? = {
-        SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) ?? SFSpeechRecognizer()
-    }()
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
+    // SherpaOnnx offline recognizer — no network required
+    private let sherpaOnnx = SherpaOnnxRecognizer()
+    private var sherpaOnnxCancellable: AnyCancellable?
+    private var modelDir: String { Bundle.main.resourcePath ?? "" }
 
     private struct RecoveryAnchorResult {
         let endOffset: Int
@@ -191,9 +172,6 @@ class SpeechRecognizer: ObservableObject {
         recognizedCharCount = min(preservingCharCount, collapsed.count)
         matchStartOffset = recognizedCharCount
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        cachedRemainingSource = ""
     }
 
     /// Jump highlight to a specific char offset (e.g. when user taps a word)
@@ -201,9 +179,6 @@ class SpeechRecognizer: ObservableObject {
         recognizedCharCount = charOffset
         matchStartOffset = charOffset
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        cachedRemainingSource = ""
         if isListening {
             restartRecognition()
         }
@@ -221,9 +196,6 @@ class SpeechRecognizer: ObservableObject {
         recognizedCharCount = 0
         matchStartOffset = 0
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        cachedRemainingSource = ""
         error = nil
         sessionGeneration += 1
 
@@ -264,252 +236,97 @@ class SpeechRecognizer: ObservableObject {
         cleanupRecognition()
     }
 
+    /// Feed audio from AVCaptureSession (recording) into sherpa-onnx recognizer
+    func feedAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard isListening, sherpaOnnx.isReady else { return }
+        sherpaOnnx.feedAudioSampleBuffer(sampleBuffer)
+    }
+
+    func beginRecognitionFromRecordingAudio() {
+        cleanupRecognition()
+
+        if !sherpaOnnx.isReady {
+            do { try sherpaOnnx.start(modelDir: modelDir) }
+            catch { self.error = "语音模型加载失败: \(error.localizedDescription)"; isListening = false; return }
+        }
+
+        let currentGeneration = sessionGeneration
+
+        sherpaOnnxCancellable = sherpaOnnx.$partialText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] spoken in
+                guard let self, self.sessionGeneration == currentGeneration, !spoken.isEmpty else { return }
+                print("🎤 识别: 「\(spoken)」→ offset=\(self.recognizedCharCount)")
+                self.lastSpokenText = spoken
+                self.matchCharacters(spoken: spoken)
+            }
+
+        isListening = true
+    }
+
     func forceStop() {
         isListening = false
         sourceText = ""
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        cachedRemainingSource = ""
         cleanupRecognition()
     }
 
     func resume() {
         matchStartOffset = recognizedCharCount
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        cachedRemainingSource = ""
         shouldDismiss = false
         beginRecognition()
     }
 
     private func cleanupRecognition() {
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
+        sherpaOnnxCancellable?.cancel()
+        sherpaOnnxCancellable = nil
+        sherpaOnnx.reset()
         asr.stop()
     }
 
-    private var recognitionStartTime: Date = .distantPast
-    private var consecutiveRestartCount: Int = 0
-    private var usingRecordingAudio: Bool = false
-
     private func beginRecognition() {
         cleanupRecognition()
-        asr.resetRetryCounter()
-        recognitionStartTime = Date()
-        usingRecordingAudio = false
+
+        // Load sherpa-onnx model if not already loaded
+        if !sherpaOnnx.isReady {
+            do { try sherpaOnnx.start(modelDir: modelDir) }
+            catch { self.error = "语音模型加载失败: \(error.localizedDescription)"; isListening = false; return }
+        }
 
         let currentGeneration = sessionGeneration
 
-        // Set up audio level and error callbacks from the audio capture layer
         asr.onLevelUpdate = { [weak self] level in
             self?.audioLevels.append(level)
-            if (self?.audioLevels.count ?? 0) > 30 {
-                self?.audioLevels.removeFirst()
-            }
-        }
-        asr.onError = { [weak self] message in
-            guard let self, self.sessionGeneration == currentGeneration else { return }
-            self.error = message
-            self.isListening = false
-            // Auto-recover: restart after a short delay unless we've
-            // been retrying too many times already
-            if self.consecutiveRestartCount < 5 {
-                self.consecutiveRestartCount += 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    guard self.isListening == false else { return }
-                    self.restartRecognition()
-                }
-            }
+            if (self?.audioLevels.count ?? 0) > 30 { self?.audioLevels.removeFirst() }
         }
         asr.onNewSegment = { [weak self] in
             guard let self, self.sessionGeneration == currentGeneration else { return }
             self.matchStartOffset = self.recognizedCharCount
             self.recentMatchPositions = []
-            self.matchCallbackCount = 0
-            self.consecutiveNoProgressCount = 0
-            self.cachedRemainingSource = ""
         }
 
-        // Use Apple SFSpeechRecognizer for speech-to-text.
-        // (SherpaOnnx models are placeholders until the user downloads them.)
-        if let recognizer = speechRecognizer, recognizer.isAvailable {
-            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-            guard let request = recognitionRequest else { return }
-            request.shouldReportPartialResults = true
-
-            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, err in
-                guard let self, self.sessionGeneration == currentGeneration else { return }
-
-                if let err = err {
-                    let nsErr = err as NSError
-                    if nsErr.domain != "kAFAssistantErrorDomain" || nsErr.code != 203 {
-                        DispatchQueue.main.async {
-                            self.error = err.localizedDescription
-                        }
-                    }
-                    return
-                }
-
-                if let result = result, !result.isFinal {
-                    let spoken = result.bestTranscription.formattedString
-                    DispatchQueue.main.async {
-                        self.lastSpokenText = spoken
-                        self.matchCharacters(spoken: spoken)
-                    }
-                }
-            }
-
-            // Feed captured audio buffers to the speech recognizer
-            asr.onAudioBuffer = { [weak self] buffer in
-                guard let self, self.sessionGeneration == currentGeneration else { return }
-                self.recognitionRequest?.append(buffer)
-
-                // SFSpeechAudioBufferRecognitionRequest accumulates audio buffers
-                // indefinitely. Restart every 15s to keep latency near real-time
-                // while retaining enough context for accurate recognition.
-                let elapsed = Date().timeIntervalSince(self.recognitionStartTime)
-                if elapsed > 5 {
-                    DispatchQueue.main.async {
-                        self.restartRecognition()
-                    }
-                }
-            }
-        } else {
-            error = "Speech recognition is not available. Check your network connection and try again."
-            isListening = false
+        // Feed captured audio to sherpa-onnx
+        asr.onAudioBuffer = { [weak self] buffer in
+            guard let self, self.sessionGeneration == currentGeneration, self.isListening else { return }
+            guard let channelData = buffer.floatChannelData else { return }
+            let frames = Int(buffer.frameLength)
+            let samples = Array(UnsafeBufferPointer(start: channelData.pointee, count: frames))
+            self.sherpaOnnx.acceptWaveform(samples: samples, sampleRate: Int32(buffer.format.sampleRate))
         }
+
+        // Subscribe to sherpa-onnx partial results
+        sherpaOnnxCancellable = sherpaOnnx.$partialText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] spoken in
+                guard let self, self.sessionGeneration == currentGeneration, !spoken.isEmpty else { return }
+                print("🎤 识别: 「\(spoken)」→ offset=\(self.recognizedCharCount)")
+                self.lastSpokenText = spoken
+                self.matchCharacters(spoken: spoken)
+            }
 
         isListening = true
         asr.start(selectedMicUID: NotchSettings.shared.selectedMicUID)
-    }
-
-    /// Starts recognition using the recording's AVCaptureSession audio stream
-    /// instead of a separate AVAudioEngine. Call this when recording is active.
-    func beginRecognitionFromRecordingAudio() {
-        cleanupRecognition()
-        asr.resetRetryCounter()
-        recognitionStartTime = Date()
-        usingRecordingAudio = true
-
-        let currentGeneration = sessionGeneration
-
-        // Auto-recover from unexpected stops (e.g. audio stream interruption)
-        asr.onError = { [weak self] message in
-            guard let self, self.sessionGeneration == currentGeneration else { return }
-            self.error = message
-            self.isListening = false
-            if self.consecutiveRestartCount < 5 {
-                self.consecutiveRestartCount += 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    guard self.isListening == false else { return }
-                    self.restartRecognition()
-                }
-            }
-        }
-
-        if let recognizer = speechRecognizer, recognizer.isAvailable {
-            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-            guard let request = recognitionRequest else { return }
-            request.shouldReportPartialResults = true
-
-            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, err in
-                guard let self, self.sessionGeneration == currentGeneration else { return }
-                if let err = err {
-                    let nsErr = err as NSError
-                    if nsErr.domain != "kAFAssistantErrorDomain" || nsErr.code != 203 {
-                        DispatchQueue.main.async {
-                            self.error = err.localizedDescription
-                        }
-                    }
-                    return
-                }
-                if let result = result, !result.isFinal {
-                    let spoken = result.bestTranscription.formattedString
-                    DispatchQueue.main.async {
-                        self.lastSpokenText = spoken
-                        self.matchCharacters(spoken: spoken)
-                    }
-                }
-            }
-        } else {
-            error = "Speech recognition is not available."
-            isListening = false
-            return
-        }
-
-        isListening = true
-        // AVAudioEngine NOT started — audio feeds in via feedAudioSampleBuffer()
-        // Periodic restart (same as beginRecognition) is handled inside
-        // feedAudioSampleBuffer's elapsed-time check.
-    }
-
-    /// Feed audio from AVCaptureSession (recording) into the speech recognizer.
-    /// Use this during recording instead of running a separate AVAudioEngine.
-    func feedAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard isListening, let request = recognitionRequest else { return }
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
-        else { return }
-
-        let numFrames = Int(CMSampleBufferGetNumSamples(sampleBuffer))
-        let numChannels = Int(asbd.mChannelsPerFrame)
-        guard numFrames > 0, numChannels > 0 else { return }
-
-        // Use AVAudioCompressedBuffer as a simplified path — create a format
-        // and directly access the sample buffer's audio data via the block buffer
-        guard let pcmFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: asbd.mSampleRate,
-            channels: AVAudioChannelCount(numChannels),
-            interleaved: false
-        ) else { return }
-
-        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(numFrames))
-        else { return }
-        pcmBuffer.frameLength = AVAudioFrameCount(numFrames)
-
-        // Extract raw audio data from CMSampleBuffer and copy channel-by-channel
-        guard let blockBuf = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-        var dataPtr: UnsafeMutablePointer<Int8>?
-        var totalLength: Int = 0
-        guard CMBlockBufferGetDataPointer(blockBuf, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPtr) == noErr,
-              let ptr = dataPtr, totalLength > 0
-        else { return }
-
-        let floatsPerChannel = numFrames
-        for ch in 0..<numChannels {
-            let offset = ch * floatsPerChannel * MemoryLayout<Float>.size
-            guard offset + floatsPerChannel * MemoryLayout<Float>.size <= totalLength,
-                  let dst = pcmBuffer.floatChannelData?[ch]
-            else { continue }
-            memcpy(dst, ptr.advanced(by: offset), floatsPerChannel * MemoryLayout<Float>.size)
-        }
-
-        request.append(pcmBuffer)
-
-        // Compute audio level for silence-paused / voice-activated mode
-        if let floatData = pcmBuffer.floatChannelData?[0] {
-            let len = Int(pcmBuffer.frameLength)
-            var sum: Float = 0
-            for i in 0..<len { let s = floatData[i]; sum += s * s }
-            let count = Swift.max(1, len)
-            let rms = sqrt(sum / Float(count))
-            let level = CGFloat(min(1.0, rms * 12.0))
-            DispatchQueue.main.async {
-                self.audioLevels.append(level)
-                if self.audioLevels.count > 30 { self.audioLevels.removeFirst() }
-            }
-        }
-
-        // Periodic restart to keep the recognition buffer small
-        let elapsed = Date().timeIntervalSince(recognitionStartTime)
-        if elapsed > 5 {
-            DispatchQueue.main.async { self.restartRecognition() }
-        }
     }
 
     private func restartRecognition() {
@@ -517,15 +334,7 @@ class SpeechRecognizer: ObservableObject {
         isListening = true
         matchStartOffset = recognizedCharCount
         recentMatchPositions = []
-        matchCallbackCount = 0
-        consecutiveNoProgressCount = 0
-        consecutiveRestartCount = 0
-        cachedRemainingSource = ""
-        if usingRecordingAudio {
-            beginRecognitionFromRecordingAudio()
-        } else {
-            beginRecognition()
-        }
+        beginRecognition()
     }
 
     // MARK: - Fuzzy character-level matching
@@ -542,35 +351,8 @@ class SpeechRecognizer: ObservableObject {
 
         // Strategy 3: recovery anchors. If ASR drops a few words but the
         // following phrase is accurate, catch up from the later anchor.
-        // Only skip recovery anchors when BOTH matchers agree AND the matched
-        // amount is substantial relative to what was spoken. If both agree on
-        // a tiny match (e.g. stuck at the same wrong position), we still need
-        // recovery anchors to try to jump past the stuck point.
-        let minAgreed = min(charResult, wordResult)
-        let charWordAgree = charResult > 0 && wordResult > 0
-            && abs(charResult - wordResult) <= 30
-            && minAgreed >= max(4, spokenSignalCount / 3)
-
-        // When stuck for several callbacks, run full recovery (ignore throttle)
-        let isStuck = consecutiveNoProgressCount >= 4
-        let recoveryMatch: RecoveryAnchorResult
-        let recoveryResult: Int
-        if charWordAgree && !isStuck {
-            recoveryMatch = .none
-            recoveryResult = 0
-        } else if isStuck {
-            // Full recovery sweep — all 4 strategies, no throttle
-            recoveryMatch = [
-                immediateThreeWordAnchorMatch(spoken: spoken),
-                recoveryAnchorMatch(spoken: spoken),
-                windowedAnchorMatch(spoken: spoken),
-                normalizedPhraseAnchorMatch(spoken: spoken)
-            ].reduce(.none, betterRecoveryAnchor)
-            recoveryResult = recoveryMatch.endOffset
-        } else {
-            recoveryMatch = bestRecoveryAnchorMatch(spoken: spoken)
-            recoveryResult = recoveryMatch.endOffset
-        }
+        let recoveryMatch = bestRecoveryAnchorMatch(spoken: spoken)
+        let recoveryResult = recoveryMatch.endOffset
 
         let best = selectBestMatch(
             charResult: charResult,
@@ -578,44 +360,10 @@ class SpeechRecognizer: ObservableObject {
             recoveryResult: recoveryResult,
             spokenSignalCount: spokenSignalCount
         )
-
-        // Stuck detection: no progress despite user speaking.
-        // After 3 callbacks with no forward movement, nudge past
-        // the stuck word aggressively for fast readers.
-        guard best > 0 else {
-            consecutiveNoProgressCount += 1
-            if consecutiveNoProgressCount >= 3 {
-                let nudge = max(15, spokenSignalCount / 3)
-                let nudged = min(recognizedCharCount + nudge, sourceText.count)
-                if nudged > recognizedCharCount {
-                    recognizedCharCount = nudged
-                    recentMatchPositions = [nudged]
-                    consecutiveNoProgressCount = 0
-                    matchStartOffset = nudged
-                    cachedRemainingSource = ""
-                }
-            }
-            return
-        }
+        guard best > 0 else { return }
 
         let newCount = matchStartOffset + best
-        guard newCount > recognizedCharCount else {
-            consecutiveNoProgressCount += 1
-            if consecutiveNoProgressCount >= 3 {
-                let nudge = max(15, spokenSignalCount / 3)
-                let nudged = min(recognizedCharCount + nudge, sourceText.count)
-                if nudged > recognizedCharCount {
-                    recognizedCharCount = nudged
-                    recentMatchPositions = [nudged]
-                    consecutiveNoProgressCount = 0
-                    matchStartOffset = nudged
-                    cachedRemainingSource = ""
-                }
-            }
-            return
-        }
-
-        consecutiveNoProgressCount = 0
+        guard newCount > recognizedCharCount else { return }
 
         let candidate = min(newCount, sourceText.count)
         let forwardDelta = candidate - recognizedCharCount
@@ -627,13 +375,8 @@ class SpeechRecognizer: ObservableObject {
             recentMatchPositions.removeFirst()
         }
 
-        // First 2 callbacks in a segment pass through immediately.
-        // This eliminates startup stutter where every segment's initial
-        // partial results are blocked by insufficient history.
-        let earlyCallbackBypass = recentMatchPositions.count <= 2
-
         // Check if at least 2 of the recent positions agree (within tolerance)
-        let agreementThreshold = 20 // characters (wider for CJK)
+        let agreementThreshold = 10 // characters
         var confirmed = false
         if recentMatchPositions.count >= 2 {
             var agreeCount = 0
@@ -646,7 +389,7 @@ class SpeechRecognizer: ObservableObject {
         }
 
         let strategyDisagreesBecauseOneIsMissing = (charResult == 0) != (wordResult == 0)
-        let shortStep = forwardDelta <= 45
+        let shortStep = forwardDelta <= 28
         let anchoredPartial = strategyDisagreesBecauseOneIsMissing && best >= 2 && forwardDelta <= 90
         let strongSequentialMatch = best >= max(6, min(24, spokenSignalCount / 2)) && forwardDelta <= 180
         let strongRecoveryAnchor = recoveryMatch.isStrongForImmediateCatchUp
@@ -665,33 +408,18 @@ class SpeechRecognizer: ObservableObject {
             }
         }
 
-        if earlyCallbackBypass || confirmed || shortStep || anchoredPartial || strongSequentialMatch || strongRecoveryAnchor {
+        if confirmed || shortStep || anchoredPartial || strongSequentialMatch || strongRecoveryAnchor {
             recognizedCharCount = candidate
-            consecutiveNoProgressCount = 0
-        } else {
-            consecutiveNoProgressCount += 1
         }
     }
 
     private func bestRecoveryAnchorMatch(spoken: String) -> RecoveryAnchorResult {
-        matchCallbackCount += 1
-        // Only run the expensive phrase-level character anchor every 3rd callback.
-        // The other 3 strategies handle nearby recovery (immediate 3-word, skip-2,
-        // and windowed word anchors) and cover the common case.
-        if matchCallbackCount % 3 == 1 {
-            return [
-                immediateThreeWordAnchorMatch(spoken: spoken),
-                recoveryAnchorMatch(spoken: spoken),
-                windowedAnchorMatch(spoken: spoken),
-                normalizedPhraseAnchorMatch(spoken: spoken)
-            ].reduce(.none, betterRecoveryAnchor)
-        } else {
-            return [
-                immediateThreeWordAnchorMatch(spoken: spoken),
-                recoveryAnchorMatch(spoken: spoken),
-                windowedAnchorMatch(spoken: spoken)
-            ].reduce(.none, betterRecoveryAnchor)
-        }
+        [
+            immediateThreeWordAnchorMatch(spoken: spoken),
+            recoveryAnchorMatch(spoken: spoken),
+            windowedAnchorMatch(spoken: spoken),
+            normalizedPhraseAnchorMatch(spoken: spoken)
+        ].reduce(.none, betterRecoveryAnchor)
     }
 
     private func betterRecoveryAnchor(_ current: RecoveryAnchorResult, _ next: RecoveryAnchorResult) -> RecoveryAnchorResult {
@@ -706,9 +434,8 @@ class SpeechRecognizer: ObservableObject {
     }
 
     private func immediateThreeWordAnchorMatch(spoken: String) -> RecoveryAnchorResult {
-        let (sourceWords, _) = sourceTokenCache()
-        let spokenWords = splitTextIntoWords(spoken.lowercased())
-        guard let match = SpeechTrackingMatcher.immediateThreeWordAnchor(sourceWords: sourceWords, spokenWords: spokenWords) else {
+        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+        guard let match = SpeechTrackingMatcher.immediateThreeWordAnchor(in: remainingSource, spoken: spoken) else {
             return .none
         }
 
@@ -831,7 +558,8 @@ class SpeechRecognizer: ObservableObject {
     }
 
     private func wordLevelMatch(spoken: String) -> Int {
-        let (sourceWords, _) = sourceTokenCache()
+        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+        let sourceWords = remainingSource.split(separator: " ").map { String($0) }
         let spokenWords = splitTextIntoWords(spoken.lowercased())
 
         var si = 0 // source word index
@@ -915,12 +643,23 @@ class SpeechRecognizer: ObservableObject {
     }
 
     private func recoveryAnchorMatch(spoken: String) -> RecoveryAnchorResult {
-        let (_, sourceTokens) = sourceTokenCache()
+        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+        let sourceWords = remainingSource.split(separator: " ").map { String($0) }
         let spokenWords = splitTextIntoWords(spoken.lowercased())
             .map { Self.normalizedToken($0) }
             .filter { !$0.isEmpty }
 
-        guard sourceTokens.count >= 2, spokenWords.count >= 2 else { return .none }
+        guard sourceWords.count >= 2, spokenWords.count >= 2 else { return .none }
+
+        let sourceTokens = sourceWords.enumerated().map { index, word -> (raw: String, normalized: String, endOffset: Int, isAnnotation: Bool) in
+            let priorLength = sourceWords.prefix(index).reduce(0) { $0 + $1.count + 1 }
+            return (
+                raw: word,
+                normalized: Self.normalizedToken(word),
+                endOffset: priorLength + word.count,
+                isAnnotation: Self.isAnnotationWord(word)
+            )
+        }
 
         let maxInitialSourceSkip = min(2, sourceTokens.count - 1)
         let maxInitialSpokenSkip = min(2, spokenWords.count - 1)
@@ -977,15 +716,17 @@ class SpeechRecognizer: ObservableObject {
     }
 
     private func windowedAnchorMatch(spoken: String) -> RecoveryAnchorResult {
-        let (_, sourceTokens) = sourceTokenCache()
+        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+        let sourceWords = remainingSource.split(separator: " ").map { String($0) }
         let spokenWords = splitTextIntoWords(spoken.lowercased())
             .map { Self.normalizedToken($0) }
             .filter { !$0.isEmpty }
 
-        guard sourceTokens.count >= 2, spokenWords.count >= 2 else { return .none }
+        guard sourceWords.count >= 2, spokenWords.count >= 2 else { return .none }
 
-        let maxSourceStart = min(sourceTokens.count - 1, 40)
-        let maxSpokenStart = min(spokenWords.count - 1, 6)
+        let sourceTokens = buildSourceTokens(from: sourceWords)
+        let maxSourceStart = min(sourceTokens.count - 1, 80)
+        let maxSpokenStart = min(spokenWords.count - 1, 10)
         var best: RecoveryAnchorResult = .none
 
         for sourceStart in 0...maxSourceStart {
@@ -1051,8 +792,8 @@ class SpeechRecognizer: ObservableObject {
         }
         guard sourceChars.count >= 4 else { return .none }
 
-        let maxSourceStart = min(sourceChars.count - 1, 400)
-        let maxSpokenStart = min(spokenChars.count - 1, 40)
+        let maxSourceStart = min(sourceChars.count - 1, 1200)
+        let maxSpokenStart = min(spokenChars.count - 1, 80)
         let minRunLength = spokenChars.count >= 12 ? 6 : 4
         var best: RecoveryAnchorResult = .none
 
@@ -1097,18 +838,6 @@ class SpeechRecognizer: ObservableObject {
             offset = endOffset + 1
         }
         return tokens
-    }
-
-    /// Returns cached (sourceWords, sourceTokens) for the current matchStartOffset.
-    /// Rebuilds the cache only when the offset changes.
-    private func sourceTokenCache() -> (words: [String], tokens: [(normalized: String, endOffset: Int, isAnnotation: Bool)]) {
-        let remaining = String(sourceText.dropFirst(matchStartOffset))
-        if remaining != cachedRemainingSource {
-            cachedRemainingSource = remaining
-            cachedSourceWords = remaining.split(separator: " ").map { String($0) }
-            cachedSourceTokens = buildSourceTokens(from: cachedSourceWords)
-        }
-        return (cachedSourceWords, cachedSourceTokens)
     }
 
     private func isFuzzyMatch(_ a: String, _ b: String) -> Bool {

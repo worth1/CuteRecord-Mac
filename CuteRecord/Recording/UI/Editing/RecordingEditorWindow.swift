@@ -836,14 +836,6 @@ private struct RecordingEditorTimeline: View {
                         .help(session.isPlaying ? t("Pause") : t("Play"))
                         .accessibilityLabel(session.isPlaying ? t("Pause") : t("Play"))
 
-                        // 在播放头位置切段按钮已隐藏
-//                        Button {
-//                            session.addCut()
-//                        } label: {
-//                            Label(t("Add Cut"), systemImage: "scissors")
-//                        }
-//                        .labelStyle(.iconOnly)
-//                        .help(t("Add Cut at Playhead"))
 //                        .accessibilityLabel(t("Add Cut"))
 
                         // 合并剪辑段按钮已隐藏

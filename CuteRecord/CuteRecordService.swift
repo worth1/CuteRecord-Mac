@@ -574,9 +574,9 @@ class CuteRecordService: NSObject, ObservableObject {
 
     /// Creates a default workspace with a sample project on first launch.
     func createSampleWorkspace() {
-        // Use home directory to avoid triggering the "access Documents folder" system dialog.
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-        let workspaceURL = home.appendingPathComponent("CuteRecord", isDirectory: true)
+        // Use app support directory to avoid triggering system permission dialogs
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let workspaceURL = appSupport.appendingPathComponent("CuteRecord", isDirectory: true)
         try? FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
         setVaultFolder(workspaceURL)
 

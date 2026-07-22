@@ -7,27 +7,23 @@ import Foundation
 @MainActor
 final class RecordingController: ObservableObject {
     static let shared = RecordingController()
-    private static let selectedDisplayIDDefaultsKey = "recording.selectedDisplayID"
 
     let recordingState = RecordingState()
     let permissionsManager = PermissionsManager()
     let audioManager = AudioManager()
 
-    private let screenRecorder = ScreenRecorder()
     private let simpleRecorder = SimpleScreenRecorder()
     private let previewController = RecordingPreviewController()
-    private let areaSelector = AreaSelector()
-    private let windowSelector = WindowSelector()
     private let recordingIndicator = RecordingIndicatorWindow()
     private let previewRecordingIndicator = RecordingIndicatorWindow()
 
+    let networkCamera = NetworkCameraReceiver()
+    var networkCameraPosition: AVCaptureDevice.Position = .back
     private var circularCameraWindow: CircularCameraWindow?
     private var previewCameraWindow: CircularCameraWindow?
     private var recordingTimer: Timer?
-    private var selectedWindowTrackingTimer: Timer?
     private var isPreviewActive = false
     private var pendingStopCompletions: [() -> Void] = []
-    private var preparedDisplayID: CGDirectDisplayID?
 
     @Published var isStarting = false
     @Published private(set) var isStopping = false
@@ -42,36 +38,16 @@ final class RecordingController: ObservableObject {
     @Published var showPermissionRequest = false
     var onPreviewClosed: (() -> Void)?
 
-    var cameraManager: CameraManager {
-        screenRecorder.getCameraManager()
-    }
+    let cameraManager = CameraManager()
 
-    var availableDisplays: [ScreenRecordingDisplayTarget] {
-        NSScreen.screens.enumerated().map { index, screen in
-            let displayID = CGDirectDisplayID(screen.displayID)
-            return ScreenRecordingDisplayTarget(
-                id: displayID,
-                frame: screen.frame,
-                name: screen.localizedName,
-                index: index
-            )
+    private func setupNetworkCameraCallbacks() {
+        networkCamera.onCommandReceived = { [weak self] cmd in
+            if cmd == "S" { self?.stopNetworkRecording() }
         }
-    }
-
-    var selectedDisplayTarget: ScreenRecordingDisplayTarget? {
-        let displays = availableDisplays
-        if let selectedDisplayID = recordingState.selectedDisplayID,
-           let display = displays.first(where: { $0.id == selectedDisplayID }) {
-            return display
-        }
-
-        return displays.first { display in
-            NSScreen.main?.displayID == display.id
-        } ?? displays.first
     }
 
     var currentRecordingInterfaceFrame: CGRect? {
-        resolvedRecordingTarget()?.interfaceFrame ?? selectedDisplayTarget?.frame
+        resolvedRecordingTarget()?.interfaceFrame
     }
 
     var hasPendingCapturedRecording: Bool {
@@ -79,36 +55,10 @@ final class RecordingController: ObservableObject {
     }
 
     var canRenderPendingCameraOnly: Bool {
-        pendingCapturedRecording?.canRenderCameraOnly == true
+        pendingCapturedRecording != nil
     }
 
-    private init() {
-        // 不在初始化时访问任何受保护文件夹，outputDirectory 默认已是 NSHomeDirectory()
-        restoreSelectedDisplay()
-
-        previewController.onClose = { [weak self] in
-            guard let self else { return }
-            self.onPreviewClosed?()
-            self.onPreviewClosed = nil
-        }
-
-        screenRecorder.setCameraOverlaySnapshotProvider { [weak self] in
-            guard let self else { return nil }
-            if let snapshot = self.circularCameraWindow?.metadataSnapshot() {
-                return snapshot
-            }
-            guard let frame = self.recordingState.customCameraOverlayFrame else { return nil }
-            return CameraOverlaySnapshot(
-                frame: frame,
-                shape: self.recordingState.cameraOverlayShape,
-                size: self.recordingState.cameraOverlaySize
-            )
-        }
-
-        screenRecorder.setPostProcessingHandler { [weak self] event in
-            self?.handleRecordingPostProcessingEvent(event)
-        }
-    }
+    // MARK: - Preview
 
     func refreshDevicesAndPermissions() {
         Task {
@@ -126,219 +76,52 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    func selectDisplay(_ display: ScreenRecordingDisplayTarget) {
-        recordingState.captureMode = .fullScreen
-        recordingState.selectedDisplayID = display.id
-        preparedDisplayID = display.id
-        UserDefaults.standard.set(Int(display.id), forKey: Self.selectedDisplayIDDefaultsKey)
-        recordingState.selectedWindowTarget = nil
-        recordingState.recordingMode = .fullScreen
-        updatePreview()
-    }
-
-    private func restoreSelectedDisplay() {
-        let savedDisplayID = UserDefaults.standard.integer(forKey: Self.selectedDisplayIDDefaultsKey)
-        guard savedDisplayID > 0 else { return }
-        let displayID = CGDirectDisplayID(savedDisplayID)
-        recordingState.selectedDisplayID = displayID
-        preparedDisplayID = displayID
-    }
-
-    func startConfiguredRecording(completion: @escaping (Bool) -> Void) {
-        switch recordingState.captureMode {
-        case .fullScreen:
-            endPreview()
-            recordingState.recordingMode = .fullScreen
-            let displayID = selectedDisplayTarget?.id
-            preparedDisplayID = displayID
-            startRecording(displayID: displayID) { [weak self] started in
-                if !started {
-                    self?.beginPreview()
-                }
-                completion(started)
-            }
-        case .selectedArea:
-            endPreview()
-            areaSelector.selectArea(aspectRatioPreset: recordingState.areaAspectRatioPreset) { [weak self] rect in
-                guard let self, let rect else {
-                    self?.beginPreview()
-                    completion(false)
-                    return
-                }
-
-                self.recordingState.recordingMode = .selectedArea(rect)
-                self.recordingState.selectedArea = rect
-                self.startRecording { [weak self] started in
-                    if !started {
-                        self?.beginPreview()
-                    }
-                    completion(started)
-                }
-            }
-        case .selectedWindow:
-            endPreview()
-            windowSelector.selectWindow { [weak self] target in
-                guard let self, let target else {
-                    self?.beginPreview()
-                    completion(false)
-                    return
-                }
-
-                let currentTarget = self.refreshedWindowTarget(target) ?? target
-                self.setSelectedWindowTarget(currentTarget)
-                self.startRecording { [weak self] started in
-                    if !started {
-                        self?.beginPreview()
-                    }
-                    completion(started)
-                }
-            }
-        }
-    }
-
-    func startPreviewedRecording(completion: @escaping (Bool) -> Void) {
-        switch recordingState.captureMode {
-        case .fullScreen:
-            recordingState.recordingMode = .fullScreen
-            let displayID = selectedDisplayTarget?.id
-            preparedDisplayID = displayID
-            beginPreparedRecording(displayID: displayID, completion: completion)
-        case .selectedArea:
-            let rect = !recordingState.selectedArea.isEmpty ? recordingState.selectedArea : previewRecordingRect()
-            guard let rect else {
-                completion(false)
-                return
-            }
-
-            recordingState.selectedArea = rect
-            recordingState.recordingMode = .selectedArea(rect)
-            beginPreparedRecording(completion: completion)
-        case .selectedWindow:
-            if let target = recordingState.selectedWindowTarget {
-                let currentTarget = refreshedWindowTarget(target) ?? target
-                setSelectedWindowTarget(currentTarget)
-                beginPreparedRecording(completion: completion)
-                return
-            }
-
-            selectWindowForPreview { [weak self] target in
-                guard let self, let target else {
-                    completion(false)
-                    return
-                }
-
-                let currentTarget = self.refreshedWindowTarget(target) ?? target
-                self.setSelectedWindowTarget(currentTarget)
-                self.beginPreparedRecording(completion: completion)
-            }
-        }
-    }
-
-    func selectAreaForPreview(completion: ((CGRect?) -> Void)? = nil) {
-        let previousMode = recordingState.captureMode
-        recordingState.captureMode = .selectedArea
-        previewRecordingIndicator.hideIndicator()
-
-        areaSelector.selectArea(aspectRatioPreset: recordingState.areaAspectRatioPreset) { [weak self] rect in
-            guard let self else {
-                completion?(nil)
-                return
-            }
-
-            if let rect {
-                self.recordingState.selectedArea = rect
-                self.recordingState.recordingMode = .selectedArea(rect)
-            } else if self.recordingState.selectedArea.isEmpty {
-                self.recordingState.captureMode = previousMode
-            }
-
-            self.beginPreview()
-            completion?(rect)
-        }
-    }
-
-    func selectWindowForPreview(completion: ((WindowRecordingTarget?) -> Void)? = nil) {
-        let previousMode = recordingState.captureMode
-        recordingState.captureMode = .selectedWindow
-        previewRecordingIndicator.hideIndicator()
-
-        windowSelector.selectWindow { [weak self] target in
-            guard let self else {
-                completion?(nil)
-                return
-            }
-
-            if let target {
-                self.setSelectedWindowTarget(target)
-            } else if self.recordingState.selectedWindowTarget == nil {
-                self.recordingState.captureMode = previousMode
-            }
-
-            self.beginPreview()
-            completion?(target)
-        }
-    }
-
     func beginPreview() {
-        guard !recordingState.isRecording && !screenRecorder.isRecording else { return }
-
+        guard !recordingState.isRecording else { return }
         isPreviewActive = true
         isPreviewing = true
+        Task {
+            await permissionsManager.checkAllPermissions()
+            guard permissionsManager.cameraAuthorized else {
+                NSLog("[RecordingController] Camera not authorized")
+                return
+            }
+            // Small delay after permission grant lets system settle (macOS issue)
+            if !cameraManager.isCapturing {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                do {
+                    try await cameraManager.startCapture(enableAudio: false)
+                } catch {
+                    NSLog("[RecordingController] Camera start failed: \(error)")
+                    // Retry once after a delay
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    do { try await cameraManager.startCapture(enableAudio: false) }
+                    catch { NSLog("[RecordingController] Camera retry also failed: \(error)"); return }
+                }
+            }
+            updatePreview()
+        }
+    }
+
+    func showCameraPreview() {
+        recordingState.cameraOverlayEnabled = true
         updatePreview()
+    }
+
+    func hideCameraPreview() {
+        recordingState.cameraOverlayEnabled = false
+        circularCameraWindow?.hide()
+        circularCameraWindow = nil
     }
 
     func updatePreview() {
-        guard isPreviewActive, !recordingState.isRecording, !screenRecorder.isRecording else { return }
-
+        guard isPreviewActive, !recordingState.isRecording else { return }
         guard let previewRect = previewRecordingRect() else {
             previewRecordingIndicator.hideIndicator()
             updateCameraPreview(recordingRect: nil)
             return
         }
-
-        // if recordingState.captureMode == .selectedArea {
-        //     previewRecordingIndicator.showInteractiveIndicator(
-        //         for: previewRect,
-        //         aspectRatio: recordingState.areaAspectRatioPreset.aspectRatio ?? previewRect.width / max(previewRect.height, 1)
-        //     ) { [weak self] rect in
-        //         self?.updateSelectedAreaPreview(to: rect)
-        //     }
-        // } else {
-        //     previewRecordingIndicator.showIndicator(for: previewRect)
-        // }
-
-        if recordingState.captureMode == .fullScreen {
-            preparedDisplayID = selectedDisplayTarget?.id
-        }
-
         updateCameraPreview(recordingRect: previewRect)
-
-        if recordingState.captureMode == .selectedWindow {
-            startSelectedWindowTracking()
-        } else if !recordingState.isRecording && !screenRecorder.isRecording {
-            stopSelectedWindowTracking()
-        }
-    }
-
-    private func updateSelectedAreaPreview(to rect: CGRect) {
-        guard isPreviewActive,
-              recordingState.captureMode == .selectedArea,
-              !recordingState.isRecording,
-              !screenRecorder.isRecording
-        else {
-            return
-        }
-
-        if let cameraFrame = recordingState.customCameraOverlayFrame,
-           !recordingState.selectedArea.isEmpty {
-            let dx = rect.minX - recordingState.selectedArea.minX
-            let dy = rect.minY - recordingState.selectedArea.minY
-            recordingState.customCameraOverlayFrame = cameraFrame.offsetBy(dx: dx, dy: dy)
-        }
-
-        recordingState.selectedArea = rect
-        recordingState.recordingMode = .selectedArea(rect)
-        updateCameraPreview(recordingRect: rect)
     }
 
     func resetCustomCameraOverlayFrame() {
@@ -348,11 +131,7 @@ final class RecordingController: ObservableObject {
 
     func restartCameraPreview() {
         guard isPreviewActive else { return }
-
-        if !recordingState.isRecording && !screenRecorder.isRecording {
-            cameraManager.stopCapture()
-        }
-
+        if !recordingState.isRecording { cameraManager.stopCapture() }
         updatePreview()
     }
 
@@ -362,646 +141,65 @@ final class RecordingController: ObservableObject {
         previewRecordingIndicator.hideIndicator()
         previewCameraWindow?.hide()
         previewCameraWindow = nil
-        if !recordingState.isRecording && !screenRecorder.isRecording {
-            stopSelectedWindowTracking()
-        }
-
-        if !recordingState.isRecording && !screenRecorder.isRecording {
-            cameraManager.stopCapture()
-        }
+        if !recordingState.isRecording { cameraManager.stopCapture() }
     }
 
-    func stopRecording(completion: (() -> Void)? = nil) {
-        if let completion {
-            pendingStopCompletions.append(completion)
-        }
+    // MARK: - Recording
 
-        guard !isStopping else { return }
-        guard recordingState.isRecording || screenRecorder.isRecording else {
-            runPendingStopCompletions()
-            return
-        }
-
-        isStopping = true
-        stopRecordingTimer()
-        stopSelectedWindowTracking()
-        recordingIndicator.hideIndicator()
-        let expectedOutputURL = recordingState.outputURL
-        if let snapshot = circularCameraWindow?.metadataSnapshot() {
-            recordingState.customCameraOverlayFrame = snapshot.frame
-        }
-        circularCameraWindow?.hide()
-        circularCameraWindow = nil
-
-        Task {
-            var didRunStopCompletions = false
-            let runStopCompletionsIfNeeded = { [weak self] in
-                guard !didRunStopCompletions else { return }
-                didRunStopCompletions = true
-                self?.runPendingStopCompletions()
-            }
-
-            do {
-                pendingCapturedRecording = try await screenRecorder.stopRecording()
-                    ?? capturedRecordingOutput(for: expectedOutputURL)
-            } catch {
-                lastError = error.localizedDescription
-                pendingCapturedRecording = capturedRecordingOutput(for: expectedOutputURL)
-            }
-
-            recordingState.stopRecording()
-            isRecording = false
-            isStopping = false
-            runStopCompletionsIfNeeded()
-        }
-    }
-
-    private func capturedRecordingOutput(for outputURL: URL) -> CapturedRecordingOutput? {
-        CapturedRecordingOutput(discovering: outputURL)
-    }
-
-    func renderPendingCapturedRecording(
-        mode: RecordingRenderMode,
-        exportSettings: RecordingExportSettings = .default
-    ) {
-        guard let capturedOutput = pendingCapturedRecording, !isExporting else { return }
-        renderCapturedRecording(capturedOutput, mode: mode, exportSettings: exportSettings)
-    }
-
-    func renderPendingCapturedRecording(
-        editDecision: RecordingEditDecision,
-        exportSettings: RecordingExportSettings = .default
-    ) {
-        renderPendingCapturedRecording(mode: .edited(editDecision), exportSettings: exportSettings)
-    }
-
-    func renderCapturedRecording(
-        _ capturedOutput: CapturedRecordingOutput,
-        editDecision: RecordingEditDecision,
-        exportSettings: RecordingExportSettings = .default
-    ) {
-        renderCapturedRecording(capturedOutput, mode: .edited(editDecision), exportSettings: exportSettings)
-    }
-
-    func renderCapturedRecording(
-        _ capturedOutput: CapturedRecordingOutput,
-        mode: RecordingRenderMode,
-        exportSettings: RecordingExportSettings = .default
-    ) {
-        guard !isExporting else { return }
-        if pendingCapturedRecording?.outputURL.standardizedFileURL == capturedOutput.outputURL.standardizedFileURL {
-            pendingCapturedRecording = nil
-        }
-        screenRecorder.renderCapturedRecording(capturedOutput, mode: mode, exportSettings: exportSettings)
-    }
-
-    func deletePendingCapturedRecording() {
-        guard let capturedOutput = pendingCapturedRecording else { return }
-        pendingCapturedRecording = nil
-        deleteCapturedRecording(capturedOutput)
-    }
-
-    func deleteCapturedRecording(_ capturedOutput: CapturedRecordingOutput) {
-        do {
-            _ = try screenRecorder.deleteCapturedRecording(capturedOutput)
-            lastOutputURL = nil
-            exportStatusText = nil
-            recordingLibraryChangeID = UUID()
-        } catch {
-            lastError = error.localizedDescription
-        }
-    }
-
-    private func handleRecordingPostProcessingEvent(_ event: RecordingPostProcessingEvent) {
-        switch event {
-        case .started(_, let mode):
-            isExporting = true
-            exportStatusText = uiText(mode.statusText)
-        case .completed(let result):
-            isExporting = false
-            exportStatusText = nil
-            lastOutputURL = result.finalOutputURL
-            recordingLibraryChangeID = UUID()
-
-            // Suppress FSEvent-triggered vault refreshes so that the export
-            // artifacts (video files written to the project directory) do not
-            // cause false "file changed on disk" errors for script pages.
-            CuteRecordService.shared.suppressVaultEvents(forSeconds: 5.0)
-
-            SoundPlayer.play("lling")
-            // Show success alert first; only open Finder when the user clicks the button.
-            showExportSuccessAlert(for: result.finalOutputURL)
-        }
-    }
-
-    private func showExportSuccessAlert(for url: URL) {
-        let alert = NSAlert()
-        alert.messageText = uiText("Export Successful")
-        alert.informativeText = uiText("The video has been exported successfully.")
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: uiText("Show in Finder"))
-        alert.addButton(withTitle: uiText("Done!"))
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            revealRecordingInFinder(url)
-        }
-    }
-
-    private func startRecording(
-        displayID requestedDisplayID: CGDirectDisplayID? = nil,
-        completion: ((Bool) -> Void)? = nil
-    ) {
-        guard !recordingState.isRecording && !screenRecorder.isRecording && !isStarting else {
-            completion?(false)
-            return
-        }
-
-        print("🎬 开始录制流程...")
-        isStarting = true
-        lastError = nil
-        let displayIDForRecording = requestedDisplayID ?? preparedDisplayID ?? selectedDisplayTarget?.id
-
-        Task {
-            await permissionsManager.checkAllPermissions()
-
-            // 如果录制屏幕，才检查屏幕录制权限
-            // 当前我们只录制摄像头，所以跳过屏幕录制权限检查
-            // guard permissionsManager.screenRecordingAuthorized else {
-            //     isStarting = false
-            //     lastError = "Screen recording permission is required."
-            //     await permissionsManager.requestScreenRecordingPermission()
-            //     completion?(false)
-            //     return
-            // }
-
-            // 如果麦克风启用但未授权，弹出权限请求弹窗
-            if recordingState.microphoneEnabled && !permissionsManager.microphoneAuthorized {
-                isStarting = false
-                showPermissionRequest = true
-                completion?(false)
-                return
-            }
-
-            // 如果摄像头启用但未授权，弹出权限请求弹窗
-            if recordingState.cameraOverlayEnabled && !permissionsManager.cameraAuthorized {
-                isStarting = false
-                showPermissionRequest = true
-                completion?(false)
-                return
-            }
-
-            if case .selectedWindow = recordingState.recordingMode {
-                _ = refreshSelectedWindowTarget()
-            }
-
-            recordingState.startRecording()
-            isRecording = true
-            startRecordingTimer()
-
-            do {
-                try await screenRecorder.startRecording(
-                    mode: recordingState.recordingMode,
-                    outputURL: recordingState.outputURL,
-                    cameraOverlay: recordingState.cameraOverlayEnabled,
-                    cameraPosition: recordingState.cameraOverlayPosition,
-                    cameraSize: recordingState.cameraOverlaySize,
-                    systemAudioEnabled: recordingState.systemAudioEnabled,
-                    microphoneEnabled: recordingState.microphoneEnabled,
-                    microphoneDeviceID: audioManager.getMicrophoneDeviceIDForSCK(),
-                    displayID: displayIDForRecording,
-                    recordScreen: false
-                )
-
-                showRecordingOverlays()
-                completion?(true)
-            } catch {
-                recordingState.stopRecording()
-                isRecording = false
-                stopRecordingTimer()
-                lastError = error.localizedDescription
-                completion?(false)
-            }
-
-            isStarting = false
-        }
-    }
-
-    private func beginPreparedRecording(
-        displayID requestedDisplayID: CGDirectDisplayID? = nil,
-        completion: @escaping (Bool) -> Void
-    ) {
-        endPreview()
-        startRecording(displayID: requestedDisplayID) { [weak self] started in
-            if !started {
-                self?.beginPreview()
-            }
-            completion(started)
-        }
-    }
-
-    private func showRecordingOverlays() {
-        // if case .selectedArea(let rect) = recordingState.recordingMode {
-        //     recordingIndicator.showIndicator(for: rect)
-        // }
-
-        if case .selectedWindow = recordingState.recordingMode {
-            startSelectedWindowTracking()
-        }
-
-        guard recordingState.cameraOverlayEnabled else { return }
-
-        if circularCameraWindow == nil {
-            circularCameraWindow = CircularCameraWindow(cameraManager: cameraManager)
-        }
-
-        circularCameraWindow?.show(
-            at: recordingState.cameraOverlayPosition,
-            size: recordingState.cameraOverlaySize,
-            shape: recordingState.cameraOverlayShape,
-            recordingRect: currentRecordingFrame(),
-            customFrame: recordingState.customCameraOverlayFrame
-        ) { [weak self] frame in
-            self?.recordingState.customCameraOverlayFrame = frame
-        }
-    }
-
-    private func currentRecordingFrame() -> CGRect? {
-        resolvedRecordingTarget()?.overlayFrame
-    }
-
-    private var displayGeometries: [RecordingDisplayGeometry] {
-        availableDisplays.map { display in
-            RecordingDisplayGeometry(
-                id: display.id,
-                frame: display.frame,
-                name: display.name,
-                index: display.index
-            )
-        }
-    }
-
-    private func resolvedRecordingTarget(
-        mode: RecordingMode? = nil,
-        selectedDisplayID: CGDirectDisplayID? = nil
-    ) -> ResolvedRecordingTarget? {
-        let activeMode = mode ?? recordingState.recordingMode
-        let activeDisplayID = selectedDisplayID
-            ?? preparedDisplayID
-            ?? recordingState.selectedDisplayID
-            ?? selectedDisplayTarget?.id
-
-        return ResolvedRecordingTarget.resolve(
-            mode: activeMode,
-            selectedDisplayID: activeDisplayID,
-            displays: displayGeometries
-        )
-    }
-
-    private func setSelectedWindowTarget(_ target: WindowRecordingTarget) {
-        recordingState.selectedWindowTarget = target
-        recordingState.selectedArea = target.frame
-        recordingState.recordingMode = .selectedWindow(target)
-    }
-
-    private func refreshedWindowTarget(_ target: WindowRecordingTarget) -> WindowRecordingTarget? {
-        windowSelector.refreshedTarget(target)
-    }
-
-    @discardableResult
-    private func refreshSelectedWindowTarget() -> (target: WindowRecordingTarget, frameChanged: Bool)? {
-        guard let currentTarget = activeSelectedWindowTarget(),
-              let refreshedTarget = refreshedWindowTarget(currentTarget)
-        else {
-            return nil
-        }
-
-        let frameChanged = !rectsApproximatelyEqual(currentTarget.frame, refreshedTarget.frame)
-        if frameChanged
-            || recordingState.selectedWindowTarget?.windowID != refreshedTarget.windowID
-            || recordingState.selectedWindowTarget?.title != refreshedTarget.title
-            || recordingState.selectedWindowTarget?.ownerName != refreshedTarget.ownerName {
-            setSelectedWindowTarget(refreshedTarget)
-        }
-
-        return (refreshedTarget, frameChanged)
-    }
-
-    private func activeSelectedWindowTarget() -> WindowRecordingTarget? {
-        if let target = recordingState.selectedWindowTarget {
-            return target
-        }
-
-        if case .selectedWindow(let target) = recordingState.recordingMode {
-            return target
-        }
-
-        return nil
-    }
-
-    private func rectsApproximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-        abs(lhs.origin.x - rhs.origin.x) < 0.5
-            && abs(lhs.origin.y - rhs.origin.y) < 0.5
-            && abs(lhs.width - rhs.width) < 0.5
-            && abs(lhs.height - rhs.height) < 0.5
-    }
-
-    private func startSelectedWindowTracking() {
-        guard selectedWindowTrackingTimer == nil else { return }
-
-        selectedWindowTrackingTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-            Task { @MainActor [weak self] in
-                self?.updateSelectedWindowTracking()
-            }
-        }
-    }
-
-    private func stopSelectedWindowTracking() {
-        selectedWindowTrackingTimer?.invalidate()
-        selectedWindowTrackingTimer = nil
-    }
-
-    private func updateSelectedWindowTracking() {
-        let shouldTrackPreview = isPreviewActive && recordingState.captureMode == .selectedWindow
-        let shouldTrackRecording: Bool
-        if case .selectedWindow = recordingState.recordingMode {
-            shouldTrackRecording = recordingState.isRecording || screenRecorder.isRecording
-        } else {
-            shouldTrackRecording = false
-        }
-
-        guard shouldTrackPreview || shouldTrackRecording else {
-            stopSelectedWindowTracking()
-            return
-        }
-
-        guard let refresh = refreshSelectedWindowTarget() else {
-            if shouldTrackPreview {
-                previewRecordingIndicator.hideIndicator()
-                updateCameraPreview(recordingRect: nil)
-            }
-            return
-        }
-
-        guard refresh.frameChanged else { return }
-
-        if shouldTrackPreview {
-            updatePreview()
-        }
-
-        if shouldTrackRecording {
-            updateRecordingCameraWindow(recordingRect: refresh.target.frame)
-        }
-    }
-
-    private func updateRecordingCameraWindow(recordingRect: CGRect?) {
-        guard recordingState.cameraOverlayEnabled else { return }
-
-        circularCameraWindow?.show(
-            at: recordingState.cameraOverlayPosition,
-            size: recordingState.cameraOverlaySize,
-            shape: recordingState.cameraOverlayShape,
-            recordingRect: recordingRect,
-            customFrame: recordingState.customCameraOverlayFrame
-        ) { [weak self] frame in
-            self?.recordingState.customCameraOverlayFrame = frame
-        }
-    }
-
-    private func updateCameraPreview(recordingRect: CGRect?) {
-        guard recordingState.cameraOverlayEnabled else {
-            previewCameraWindow?.hide()
-            previewCameraWindow = nil
-
-            if !recordingState.isRecording && !screenRecorder.isRecording {
-                cameraManager.stopCapture()
-            }
-            return
-        }
-
-        if previewCameraWindow == nil {
-            previewCameraWindow = CircularCameraWindow(cameraManager: cameraManager)
-        }
-
-        previewCameraWindow?.show(
-            at: recordingState.cameraOverlayPosition,
-            size: recordingState.cameraOverlaySize,
-            shape: recordingState.cameraOverlayShape,
-            recordingRect: recordingRect,
-            customFrame: recordingState.customCameraOverlayFrame
-        ) { [weak self] frame in
-            self?.recordingState.customCameraOverlayFrame = frame
-        }
-
-        Task { @MainActor [weak self] in
-            guard let self, self.isPreviewActive, !self.recordingState.isRecording, !self.screenRecorder.isRecording else { return }
-
-            await self.permissionsManager.checkCameraPermission()
-            guard self.permissionsManager.cameraAuthorized else { return }
-
-            self.cameraManager.refreshCameraDevices()
-
-            do {
-                try await self.cameraManager.startCapture()
-            } catch {
-                self.lastError = error.localizedDescription
-            }
-        }
-    }
-
-    private func previewRecordingRect() -> CGRect? {
-        switch recordingState.captureMode {
-        case .fullScreen:
-            return previewScreenRect()
-        case .selectedArea:
-            if !recordingState.selectedArea.isEmpty {
-                return recordingState.selectedArea
-            }
-            return defaultAreaPreviewRect()
-        case .selectedWindow:
-            return previewWindowRect() ?? defaultAreaPreviewRect()
-        }
-    }
-
-    private func previewScreenRect() -> CGRect? {
-        selectedDisplayTarget?.frame.insetBy(dx: 8, dy: 8)
-    }
-
-    private func defaultAreaPreviewRect() -> CGRect? {
-        let screen = screen(for: selectedDisplayTarget?.id) ?? NSScreen.main
-        guard let screen else { return nil }
-
-        let visibleFrame = screen.visibleFrame
-        let fallbackAspectRatio: CGFloat = 16.0 / 9.0
-        let aspectRatio = recordingState.areaAspectRatioPreset.aspectRatio ?? fallbackAspectRatio
-
-        var width = visibleFrame.width * 0.62
-        var height = width / aspectRatio
-
-        if height > visibleFrame.height * 0.62 {
-            height = visibleFrame.height * 0.62
-            width = height * aspectRatio
-        }
-
-        return CGRect(
-            x: visibleFrame.midX - width / 2,
-            y: visibleFrame.midY - height / 2,
-            width: width,
-            height: height
-        )
-    }
-
-    private func screen(for displayID: CGDirectDisplayID?) -> NSScreen? {
-        guard let displayID else { return nil }
-        return NSScreen.screens.first { CGDirectDisplayID($0.displayID) == displayID }
-    }
-
-    private func previewWindowRect() -> CGRect? {
-        if let target = refreshSelectedWindowTarget()?.target ?? recordingState.selectedWindowTarget {
-            return target.frame.insetBy(dx: 4, dy: 4)
-        }
-
-        return NSApp.windows
-            .first { window in
-                !(window is NSPanel)
-                    && window.isVisible
-                    && window.frame.width > 120
-                    && window.frame.height > 120
-            }?
-            .frame
-            .insetBy(dx: 4, dy: 4)
-    }
-
-    private func startRecordingTimer() {
-        stopRecordingTimer()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            Task { @MainActor [weak self] in
-                self?.recordingState.updateRecordingDuration()
-            }
-        }
-    }
-
-    private func stopRecordingTimer() {
-        recordingTimer?.invalidate()
-        recordingTimer = nil
-    }
-
-    private func runPendingStopCompletions() {
-        let completions = pendingStopCompletions
-        pendingStopCompletions.removeAll()
-        completions.forEach { $0() }
-    }
-
-    private func preferredCompletedOutputURL(for baseOutputURL: URL) -> URL? {
-        let fileManager = FileManager.default
-        let basePath = baseOutputURL.deletingPathExtension().path
-        let fileExtension = baseOutputURL.pathExtension
-
-        let compositedURL = URL(fileURLWithPath: "\(basePath)_composited.\(fileExtension)")
-        if fileManager.fileExists(atPath: compositedURL.path) {
-            return compositedURL
-        }
-
-        if fileManager.fileExists(atPath: baseOutputURL.path) {
-            return baseOutputURL
-        }
-
-        let cameraURL = URL(fileURLWithPath: "\(basePath)_camera.\(fileExtension)")
-        if fileManager.fileExists(atPath: cameraURL.path) {
-            return cameraURL
-        }
-
-        return nil
-    }
-
-    private func revealRecordingInFinder(_ url: URL) {
-        NSWorkspace.shared.open(url.deletingLastPathComponent())
-    }
-
-    private func configureOutputDirectoryIfNeeded() {
-        // 如果已有有效输出目录，不重复配置
-        let current = recordingState.outputDirectory
-        if FileManager.default.fileExists(atPath: current.path) {
-            return
-        }
-        // 使用 Home 目录，避免触发桌面/文稿文件夹的 TCC 弹窗
-        let outputDirectory = URL(fileURLWithPath: NSHomeDirectory())
-        try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-        recordingState.outputDirectory = outputDirectory
-    }
-    
-    // MARK: - 简化录制功能（屏幕+麦克风）
-    
-    /// 启动简化录制（仅摄像头+麦克风）
-    /// 使用 CameraManager 的 session 同时服务预览和录制
     func startSimpleRecording() async {
-        guard !isRecording else { return }
-        
-        print("🎬 开始启动摄像头录制...")
+        guard !recordingState.isRecording, !isStarting else { return }
         isStarting = true
         lastError = nil
-        
-        // 检查权限（不重复弹系统对话框，体验更好）
-        await permissionsManager.checkCameraPermission()
-        await permissionsManager.checkMicrophonePermission()
 
-        guard permissionsManager.cameraAuthorized else {
-            isStarting = false
-            lastError = "需要摄像头权限"
-            return
+        // Refresh permissions state before checking (avoids stale cache)
+        await permissionsManager.checkAllPermissions()
+        print("🔍 录制权限检查: mic=\(permissionsManager.microphoneAuthorized) cam=\(permissionsManager.cameraAuthorized)")
+        if recordingState.microphoneEnabled && !permissionsManager.microphoneAuthorized {
+            print("❌ 麦克风未授权，弹出权限窗口")
+            isStarting = false; showPermissionRequest = true; return
+        }
+        if recordingState.cameraOverlayEnabled && !permissionsManager.cameraAuthorized {
+            print("❌ 摄像头未授权，弹出权限窗口")
+            isStarting = false; showPermissionRequest = true; return
         }
 
-        guard permissionsManager.microphoneAuthorized else {
-            isStarting = false
-            lastError = "需要麦克风权限"
-            return
-        }
-        
-        // 准备输出目录
-        configureOutputDirectoryIfNeeded()
-        
-        // 生成输出文件名
+        recordingState.startRecording()
+        isRecording = true
+        startRecordingTimer()
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let timestamp = formatter.string(from: Date())
-        let outputURL = recordingState.outputDirectory.appendingPathComponent("Camera_\(timestamp).mov")
-        
-        
-        // 获取摄像头分辨率用于 writer
-        let resolution = cameraManager.currentResolution
-        let writerWidth = Int(resolution.width)
-        let writerHeight = Int(resolution.height)
-        
-        // 确保 CameraManager 已启动采集（带音频），复用同一个 session
-        do {
-            if !cameraManager.isCapturing {
-                try await cameraManager.startCapture(enableAudio: true)
-            } else {
-                // 已在采集但可能没带音频，需要重启
-                cameraManager.stopCapture()
-                try await cameraManager.startCapture(enableAudio: true)
+        let outputURL = recordingState.outputDirectory
+            .appendingPathComponent("Camera_\(formatter.string(from: Date())).mov")
+
+        var portraitCrop: (width: Int, height: Int, cropX: Int)?
+        for _ in 0..<30 {
+            guard let frame = cameraManager.getCurrentFrame() else { continue }
+            let rw = CVPixelBufferGetWidth(frame)
+            let rh = CVPixelBufferGetHeight(frame)
+            if rw < rh {
+                let cropH = rh / 2 * 2
+                let cropW = Int(CGFloat(cropH) * CGFloat(cropH) / CGFloat(rw) / 2) * 2
+                let cropX = (rw - cropW) / 2
+                portraitCrop = (cropW, cropH, cropX)
             }
-        } catch {
-            isStarting = false
-            lastError = "摄像头启动失败: \(error.localizedDescription)"
-            print("❌ 摄像头启动失败: \(error)")
-            return
+            break
         }
-        
-        // 初始化录制 writer
+
+        let writerWidth = portraitCrop?.width ?? Int(cameraManager.currentResolution.width)
+        let writerHeight = portraitCrop?.height ?? Int(cameraManager.currentResolution.height)
+
         do {
             try await simpleRecorder.startRecording(
-                outputURL: outputURL,
-                width: writerWidth,
-                height: writerHeight
+                outputURL: outputURL, width: writerWidth, height: writerHeight
             )
         } catch {
-            isStarting = false
-            lastError = "录制初始化失败: \(error.localizedDescription)"
-            print("❌ 录制初始化失败: \(error)")
-            return
+            recordingState.stopRecording(); isRecording = false
+            stopRecordingTimer(); lastError = error.localizedDescription
+            isStarting = false; return
         }
-        
-        // 设置 handler 将 CameraManager 的帧转发给 SimpleScreenRecorder
+
+        // Wire up camera → SimpleScreenRecorder frame feeding
         cameraManager.setRecordingFrameHandler { [weak self] frame in
             guard let self, self.simpleRecorder.isRecording else { return }
             self.simpleRecorder.appendVideoFrame(pixelBuffer: frame.pixelBuffer, timestamp: frame.timestamp)
@@ -1010,68 +208,207 @@ final class RecordingController: ObservableObject {
             guard let self, self.simpleRecorder.isRecording else { return }
             self.simpleRecorder.appendAudioSampleBuffer(sampleBuffer)
         }
-        
-        isRecording = true
+
+        // Restart camera with audio for recording (preview was started without audio)
+        if cameraManager.isCapturing {
+            do { try await cameraManager.startCapture(enableAudio: true) }
+            catch { print("⚠️ 录制音频启动失败: \(error)") }
+        }
+
+        showRecordingOverlays()
         isStarting = false
-        recordingState.startRecording()
-        startRecordingTimer()
-        print("✅ 摄像头录制已启动（预览+录制共用 session）")
     }
-    
-    /// 停止简化录制并准备编辑器数据
-    /// 返回录制文件 URL，录制完成后 pendingCapturedRecording 已设置
-    func stopSimpleRecordingAndGetOutput() async -> URL? {
-        guard isRecording else { return nil }
-        
-        isStopping = true
+
+    func startNetworkRecording() async {
+        guard !recordingState.isRecording, !isStarting else { return }
+        isStarting = true; lastError = nil
+
+        // Push teleprompter text to iPhone before starting recording
+        let service = CuteRecordService.shared
+        let idx = service.currentPageIndex
+        let currentText = (idx < service.pages.count ? service.pages[idx] : service.pages.first) ?? ""
+        networkCamera.sendCommand("A:" + currentText)
+
+        // Brief delay for iPhone to process the script
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        // Send scroll speed
+        let speed = String(format: "%.1f", NotchSettings.shared.scrollSpeed)
+        networkCamera.sendCommand("s:" + speed)
+
+        // Start recording on iPhone
+        recordingState.startRecording()
+        isRecording = true
+        startRecordingTimer()
+        networkCamera.sendCommand("R")
+        isStarting = false
+    }
+
+    func stopNetworkRecording() {
+        networkCamera.sendCommand("S")
+        networkCamera.disconnect()
+        recordingState.stopRecording()
+        isRecording = false
         stopRecordingTimer()
-        
-        // 清除录制帧转发 handler
-        cameraManager.setRecordingFrameHandler(nil)
-        cameraManager.audioRecordingHandler = nil
-        
-        // 关闭摄像头预览窗口和采集
-        circularCameraWindow?.hide()
-        circularCameraWindow = nil
-        previewCameraWindow?.hide()
-        previewCameraWindow = nil
-        cameraManager.stopCapture()
-        
+    }
+
+    func connectToNetworkCamera(ip: String) {
+        setupNetworkCameraCallbacks()
+        networkCamera.connect(to: ip)
+    }
+
+    func stopSimpleRecordingAndGetOutput() async -> URL? {
         do {
             if let outputURL = try await simpleRecorder.stopRecording() {
-                let asset = AVURLAsset(url: outputURL)
-                var actualDuration: TimeInterval = 0
-                if let duration = try? await asset.load(.duration) {
-                    actualDuration = CMTimeGetSeconds(duration)
-                }
-                
-                isRecording = false
-                lastOutputURL = outputURL
-                
-                recordingState.recordingDuration = actualDuration
+                pendingCapturedRecording = CapturedRecordingOutput(discovering: outputURL)
                 recordingState.stopRecording()
-                
-                // 创建 CapturedRecordingOutput 供编辑器使用
-                let capturedOutput = CapturedRecordingOutput(outputURL: outputURL, cameraURL: nil, overlayMetadataURL: nil)
-                pendingCapturedRecording = capturedOutput
-                
-                print("✅ 录制完成: \(outputURL.lastPathComponent), 时长: \(String(format: "%.1f", actualDuration))秒")
-                isStopping = false
+                isRecording = false
+                stopRecordingTimer()
+                circularCameraWindow?.hide(); circularCameraWindow = nil
+                previewCameraWindow?.hide(); previewCameraWindow = nil
                 return outputURL
             }
         } catch {
-            lastError = "录制停止失败: \(error.localizedDescription)"
-            print("❌ 录制停止失败: \(error)")
+            lastError = error.localizedDescription
         }
-        
-        isStopping = false
+        recordingState.stopRecording()
+        isRecording = false
+        stopRecordingTimer()
+        circularCameraWindow?.hide(); circularCameraWindow = nil
+        previewCameraWindow?.hide(); previewCameraWindow = nil
         return nil
     }
-    
-    /// 关闭预览窗口
-    func closePreview() {
-        previewController.hide()
-        onPreviewClosed?()
-        onPreviewClosed = nil
+
+    func stopRecording(completion: (() -> Void)? = nil) {
+        if let completion { pendingStopCompletions.append(completion) }
+        guard !isStopping else { return }
+        guard recordingState.isRecording else { runPendingStopCompletions(); return }
+        isStopping = true
+        stopRecordingTimer()
+        recordingIndicator.hideIndicator()
+        // Disconnect frame feeding
+        cameraManager.setRecordingFrameHandler(nil)
+        cameraManager.audioRecordingHandler = nil
+        // Close all camera windows
+        circularCameraWindow?.hide(); circularCameraWindow = nil
+        previewCameraWindow?.hide(); previewCameraWindow = nil
+
+        Task {
+            pendingCapturedRecording = CapturedRecordingOutput(discovering: recordingState.outputURL)
+            recordingState.stopRecording()
+            isRecording = false
+            isStopping = false
+            runPendingStopCompletions()
+        }
     }
+
+    private func runPendingStopCompletions() {
+        let completions = pendingStopCompletions
+        pendingStopCompletions.removeAll()
+        for c in completions { c() }
+    }
+
+    // MARK: - Post-Recording
+
+    func renderPendingCapturedRecording(mode: RecordingRenderMode, exportSettings: RecordingExportSettings = .default) {
+        guard let url = pendingCapturedRecording?.outputURL, !isExporting else { return }
+        pendingCapturedRecording = nil
+        lastOutputURL = url
+        recordingLibraryChangeID = UUID()
+        SoundPlayer.play("lling")
+        revealRecordingInFinder(url)
+    }
+
+    func renderPendingCapturedRecording(editDecision: RecordingEditDecision, exportSettings: RecordingExportSettings = .default) {
+        renderPendingCapturedRecording(mode: .edited(editDecision), exportSettings: exportSettings)
+    }
+
+    func renderCapturedRecording(_ capturedOutput: CapturedRecordingOutput, editDecision: RecordingEditDecision, exportSettings: RecordingExportSettings = .default) {
+        lastOutputURL = capturedOutput.outputURL
+        recordingLibraryChangeID = UUID()
+        SoundPlayer.play("lling")
+        revealRecordingInFinder(capturedOutput.outputURL)
+    }
+
+    func renderCapturedRecording(_ capturedOutput: CapturedRecordingOutput, mode: RecordingRenderMode, exportSettings: RecordingExportSettings = .default) {
+        lastOutputURL = capturedOutput.outputURL
+        recordingLibraryChangeID = UUID()
+        SoundPlayer.play("lling")
+        revealRecordingInFinder(capturedOutput.outputURL)
+    }
+
+    func deletePendingCapturedRecording() {
+        guard let output = pendingCapturedRecording else { return }
+        pendingCapturedRecording = nil
+        deleteCapturedRecording(output)
+    }
+
+    func deleteCapturedRecording(_ output: CapturedRecordingOutput) {
+        try? FileManager.default.removeItem(at: output.outputURL)
+        lastOutputURL = nil
+        exportStatusText = nil
+        recordingLibraryChangeID = UUID()
+    }
+
+    // MARK: - Internal
+
+    private func startRecordingTimer() {
+        let start = Date()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.recordingState.recordingDuration = Date().timeIntervalSince(start)
+        }
+    }
+    private func stopRecordingTimer() { recordingTimer?.invalidate(); recordingTimer = nil }
+
+    private func showRecordingOverlays() {
+        // Hide preview overlay before showing recording overlay (only one at a time)
+        previewCameraWindow?.hide()
+        previewCameraWindow = nil
+        guard recordingState.cameraOverlayEnabled else { return }
+        if circularCameraWindow == nil { circularCameraWindow = CircularCameraWindow(cameraManager: cameraManager) }
+        circularCameraWindow?.show(
+            at: recordingState.cameraOverlayPosition, size: recordingState.cameraOverlaySize,
+            shape: recordingState.cameraOverlayShape, recordingRect: previewRecordingRect(),
+            customFrame: recordingState.customCameraOverlayFrame
+        ) { [weak self] frame in self?.recordingState.customCameraOverlayFrame = frame }
+    }
+
+    private func resolvedRecordingTarget() -> ResolvedRecordingTarget? {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
+        let display = RecordingDisplayGeometry(
+            id: CGDirectDisplayID(screen.displayID ?? 0),
+            frame: screen.frame, name: screen.localizedName
+        )
+        return .display(display)
+    }
+
+    private func previewRecordingRect() -> CGRect? {
+        guard let target = resolvedRecordingTarget() else { return nil }
+        let visibleFrame = target.interfaceFrame
+        let aspectRatio: CGFloat = 16.0 / 9.0
+        var width = visibleFrame.width * 0.62
+        var height = width / aspectRatio
+        if height > visibleFrame.height * 0.82 { height = visibleFrame.height * 0.82; width = height * aspectRatio }
+        let x = visibleFrame.midX - width / 2
+        let y = visibleFrame.midY - height / 2
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func updateCameraPreview(recordingRect: CGRect?) {
+        guard let rect = recordingRect else {
+            previewCameraWindow?.hide(); previewCameraWindow = nil; return
+        }
+        if previewCameraWindow == nil { previewCameraWindow = CircularCameraWindow(cameraManager: cameraManager) }
+        previewCameraWindow?.show(at: recordingState.cameraOverlayPosition, size: recordingState.cameraOverlaySize,
+                                  shape: recordingState.cameraOverlayShape, recordingRect: rect,
+                                  customFrame: recordingState.customCameraOverlayFrame) { [weak self] frame in
+            self?.recordingState.customCameraOverlayFrame = frame
+        }
+    }
+
+    private func revealRecordingInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func closePreview() { endPreview() }
 }

@@ -94,8 +94,14 @@ class SimpleScreenRecorder: NSObject, ObservableObject {
         writeQueue.async { [weak self] in
             guard let self, self.isWriting,
                   let adaptor = self.pixelBufferAdaptor,
-                  let writerInput = self.videoWriterInput,
-                  writerInput.isReadyForMoreMediaData else { return }
+                  let writerInput = self.videoWriterInput else {
+                print("⚠️ SimpleScreenRecorder: guard failed - isWriting=\(self?.isWriting ?? false), adaptor=\(self?.pixelBufferAdaptor != nil), input=\(self?.videoWriterInput != nil)")
+                return
+            }
+            guard writerInput.isReadyForMoreMediaData else {
+                print("⚠️ SimpleScreenRecorder: writerInput not ready")
+                return
+            }
 
             if self.firstVideoTimestamp == nil {
                 self.firstVideoTimestamp = timestamp

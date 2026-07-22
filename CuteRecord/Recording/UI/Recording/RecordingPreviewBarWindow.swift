@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 final class RecordingPreviewBarWindow: NSObject {
@@ -7,11 +8,13 @@ final class RecordingPreviewBarWindow: NSObject {
 
     func show(
         controller: RecordingController,
+        recordingMode: Binding<ContentView.RecordingMode>,
+        networkCameraIP: Binding<String>,
         onStart: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
         let visibleFrame = targetVisibleFrame(for: controller.currentRecordingInterfaceFrame)
-        let width = min(max(880, visibleFrame.width * 0.72), visibleFrame.width - 40)
+        let width = visibleFrame.width * 0.40
         let height: CGFloat = 86
         let frame = NSRect(
             x: visibleFrame.midX - width / 2,
@@ -24,6 +27,8 @@ final class RecordingPreviewBarWindow: NSObject {
 
         let rootView = RecordingPreviewBarView(
             controller: controller,
+            recordingMode: recordingMode,
+            networkCameraIP: networkCameraIP,
             onStart: {
                 onStart()
             },
@@ -196,17 +201,22 @@ private final class RecordingPreviewBarPanel: NSPanel {
 }
 
 private struct RecordingPreviewBarView: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguageSettings.shared
     @ObservedObject private var controller: RecordingController
     @ObservedObject private var recordingState: RecordingState
     @ObservedObject private var audioManager: AudioManager
     @ObservedObject private var cameraManager: CameraManager
+    @Binding private var recordingMode: ContentView.RecordingMode
+    @Binding private var networkCameraIP: String
+    @State private var countdownValue: Int = 0
+    @State private var isStartHovered: Bool = false
 
     let onStart: () -> Void
     let onCancel: () -> Void
 
     init(
         controller: RecordingController,
+        recordingMode: Binding<ContentView.RecordingMode>,
+        networkCameraIP: Binding<String>,
         onStart: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -214,325 +224,182 @@ private struct RecordingPreviewBarView: View {
         self.recordingState = controller.recordingState
         self.audioManager = controller.audioManager
         self.cameraManager = controller.cameraManager
+        self._recordingMode = recordingMode
+        self._networkCameraIP = networkCameraIP
         self.onStart = onStart
         self.onCancel = onCancel
     }
 
-    private func t(_ english: String) -> String {
-        interfaceLanguage.text(english)
-    }
-
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .semibold))
                     .frame(width: 34, height: 34)
                     .background(Color.primary.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.plain)
-            .help(t("Cancel preview"))
+            .buttonStyle(.plain).help("关闭预览")
 
-            toggleButton(
-                isOn: recordingState.microphoneEnabled,
-                icon: "mic.fill",
-                title: t("Microphone")
-            ) {
-                recordingState.microphoneEnabled.toggle()
-            }
-
-            toggleButton(
-                isOn: recordingState.cameraOverlayEnabled,
-                icon: "video.fill",
-                title: t("Camera")
-            ) {
-                recordingState.cameraOverlayEnabled.toggle()
-                if recordingState.cameraOverlayEnabled {
-                    controller.restartCameraPreview()
-                } else {
-                    controller.updatePreview()
-                }
-            }
-
-            optionsMenu
-
-            Button(action: onStart) {
-                HStack(spacing: 8) {
-                    if controller.isStarting {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        RecordGlyph(outerDiameter: 15, innerDiameter: 6)
+            Menu {
+                ForEach(ContentView.RecordingMode.allCases) { mode in
+                    Button { recordingMode = mode } label: {
+                        if recordingMode == mode { Label(mode.localizedLabel, systemImage: "checkmark") }
+                        else { Text(mode.localizedLabel) }
                     }
-                    Text(t("Start"))
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundStyle(.white)
-                .frame(height: 46)
-                .padding(.horizontal, 20)
-                .background(NotchSettings.shared.accentColor.color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } label: {
+                Text(recordingMode.localizedLabel).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                .frame(height: 34).padding(.horizontal, 10)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+            .menuStyle(.borderlessButton).fixedSize().help("选择录制模式")
+
+            if recordingMode == .phone {
+                HStack(spacing: 4) {
+                    Image(systemName: controller.networkCamera.isConnected ? "iphone.radiowaves.left.and.right" : "iphone.slash")
+                        .font(.system(size: 11)).foregroundStyle(controller.networkCamera.isConnected ? .green : .secondary)
+                    TextField(controller.networkCamera.isConnected ? "已连接" : "IP", text: $networkCameraIP)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced)).textFieldStyle(.plain).frame(width: 105)
+                        .onSubmit { controller.connectToNetworkCamera(ip: networkCameraIP) }
+                    if !networkCameraIP.isEmpty && !controller.networkCamera.isConnected {
+                        Button("连接") { controller.connectToNetworkCamera(ip: networkCameraIP) }
+                            .font(.system(size: 11, weight: .medium)).buttonStyle(.plain).foregroundStyle(.blue)
+                    }
+                }
+                .padding(.horizontal, 6).frame(height: 34)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            micMenu.help("选择麦克风设备")
+            cameraMenu.help("选择摄像头设备")
+
+            Spacer()
+
+            Button(action: { startWithCountdown() }) {
+                ZStack {
+                    if countdownValue > 0 {
+                        Circle().fill(Color.red).frame(width: 46, height: 46).shadow(color: .red.opacity(0.4), radius: 12)
+                        Text("\(countdownValue)").font(.system(size: 24, weight: .bold, design: .rounded)).foregroundColor(.white)
+                    } else if isStartHovered || controller.isRecording {
+                        Circle().fill(Color.white).frame(width: 46, height: 46).shadow(color: .white.opacity(0.2), radius: 6, y: 1)
+                        catPawMarks
+                    } else {
+                        Circle().fill(NotchSettings.shared.accentColor.color).frame(width: 46, height: 46).shadow(color: NotchSettings.shared.accentColor.color.opacity(0.3), radius: 8)
+                        Text("录制").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
+                    }
+                }
             }
             .buttonStyle(.plain)
             .disabled(controller.isStarting || controller.isRecording || controller.isStopping)
             .opacity(controller.isStarting || controller.isRecording || controller.isStopping ? 0.55 : 1)
+            .onHover { isStartHovered = $0 }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14).padding(.vertical, 12)
         .foregroundStyle(.primary)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(0.24), radius: 18, y: 10)
+        .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
         .onAppear {
-            recordingState.captureMode = .fullScreen
-            controller.refreshDevicesAndPermissions()
-            controller.beginPreview()
+            if recordingMode != .phone {
+                controller.refreshDevicesAndPermissions()
+                controller.beginPreview()
+            }
         }
-        .onChange(of: cameraManager.selectedCameraID) { _, _ in
-            controller.restartCameraPreview()
+        .onChange(of: recordingMode) { _, newMode in
+            if newMode == .phone {
+                controller.cameraManager.stopCapture(); controller.cameraManager.pushExternalFrame(nil); controller.hideCameraPreview()
+            } else { controller.refreshDevicesAndPermissions(); controller.beginPreview() }
         }
+        .onChange(of: cameraManager.selectedCameraID) { _, _ in controller.restartCameraPreview() }
     }
 
-    private var verticalDivider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.18))
-            .frame(width: 1, height: 38)
-            .padding(.horizontal, 2)
-    }
-
-    private var ratioMenu: some View {
+    private var micMenu: some View {
         Menu {
-            ForEach(AreaAspectRatioPreset.allCases, id: \.self) { preset in
+            if recordingMode == .phone { Text("iPhone 麦克风") }
+            else {
+                ForEach(audioManager.availableMicrophones) { d in
+                    Button { audioManager.selectedMicrophone = d } label: {
+                        if audioManager.selectedMicrophone == d { Label(d.name, systemImage: "checkmark") }
+                        else { Text(d.name) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(NotchSettings.shared.accentColor.color.opacity(0.85)))
+                Text(recordingMode == .phone ? "iPhone 麦克风" : audioManager.selectedMicrophone.name)
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .frame(height: 34).padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+    }
+
+    private var cameraMenu: some View {
+        Menu {
+            if recordingMode == .phone {
                 Button {
-                    recordingState.captureMode = .selectedArea
-                    recordingState.areaAspectRatioPreset = preset
-                    recordingState.selectedArea = .zero
-                    controller.updatePreview()
-                } label: {
-                    Text("\(preset.localizedTitle) · \(preset.localizedSubtitle)")
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "aspectratio")
-                    .font(.system(size: 15, weight: .semibold))
-                Text(recordingState.areaAspectRatioPreset.localizedTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(height: 46)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(recordingState.captureMode == .selectedArea ? NotchSettings.shared.accentColor.color.opacity(0.20) : Color.primary.opacity(0.08))
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(t("Area aspect ratio"))
-    }
-
-    private var displayMenu: some View {
-        let displays = controller.availableDisplays
-        let selectedDisplay = controller.selectedDisplayTarget
-
-        return Menu {
-            ForEach(displays) { display in
+                    cameraManager.selectedCameraID = "iphone_front"
+                    controller.networkCamera.sendCommand("f"); controller.networkCameraPosition = .front; controller.hideCameraPreview()
+                } label: { Label("iPhone 前置摄像头", systemImage: cameraManager.selectedCameraID == "iphone_front" ? "checkmark" : "") }
                 Button {
-                    controller.selectDisplay(display)
-                } label: {
-                    let title = display.displayName == display.shortName
-                        ? display.shortName
-                        : "\(display.shortName) · \(display.displayName)"
-
-                    if selectedDisplay?.id == display.id {
-                        Label(title, systemImage: "checkmark")
-                    } else {
-                        Text(title)
+                    cameraManager.selectedCameraID = "iphone_back"
+                    controller.networkCamera.sendCommand("b"); controller.networkCameraPosition = .back; controller.showCameraPreview()
+                } label: { Label("iPhone 后置摄像头", systemImage: cameraManager.selectedCameraID == "iphone_back" ? "checkmark" : "") }
+            } else if cameraManager.availableCameras.isEmpty { Text("无可用摄像头") }
+            else {
+                ForEach(cameraManager.availableCameras) { c in
+                    Button { cameraManager.selectedCameraID = c.id } label: {
+                        if cameraManager.selectedCameraID == c.id { Label(c.name, systemImage: "checkmark") }
+                        else { Text(c.name) }
                     }
                 }
             }
         } label: {
-            menuChip(
-                icon: displays.count > 1 ? "display.2" : "display",
-                title: selectedDisplay?.shortName ?? t("Display")
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(t("Display"))
-    }
-
-    private var cameraShapeMenu: some View {
-        Menu {
-            ForEach(CameraOverlayShape.allCases, id: \.self) { shape in
-                Button(shape.localizedDisplayName) {
-                    recordingState.cameraOverlayShape = shape
-                    controller.updatePreview()
-                }
+            HStack(spacing: 4) {
+                Image(systemName: "video.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(NotchSettings.shared.accentColor.color.opacity(0.85)))
+                Text(currentCameraName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }
-        } label: {
-            menuChip(
-                icon: cameraShapeIcon,
-                title: cameraShapeTitle
-            )
+            .frame(height: 34).padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .menuStyle(.borderlessButton).fixedSize()
     }
 
-    private var cameraShapeIcon: String {
-        switch recordingState.cameraOverlayShape {
-        case .circle:
-            return "circle"
-        case .roundedSquare:
-            return "rectangle"
-        case .roundedBox:
-            return "square"
-        case .roundedBoxPortrait:
-            return "rectangle.portrait"
+    private var currentCameraName: String {
+        if recordingMode == .phone { return cameraManager.selectedCameraID == "iphone_front" ? "前置摄像头" : "后置摄像头" }
+        return cameraManager.availableCameras.first(where: { $0.id == cameraManager.selectedCameraID })?.name ?? "选择摄像头"
+    }
+
+    private func startWithCountdown() {
+        guard countdownValue == 0 else { return }
+        recordingState.microphoneEnabled = true; recordingState.cameraOverlayEnabled = true
+        countdownValue = 3
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { t in
+            if countdownValue > 1 { countdownValue -= 1 }
+            else { t.invalidate(); countdownValue = 0; onStart() }
         }
     }
 
-    private var cameraShapeTitle: String {
-        switch recordingState.cameraOverlayShape {
-        case .circle:
-            return t("Circle")
-        case .roundedSquare:
-            return t("Rounded Rectangle")
-        case .roundedBox:
-            return t("Rounded Square")
-        case .roundedBoxPortrait:
-            return t("Rectangle 9:16")
-        }
-    }
-
-    private var cameraPositionMenu: some View {
-        Menu {
-            ForEach(CameraOverlayPosition.allCases, id: \.self) { position in
-                Button(position.localizedDisplayName) {
-                    recordingState.cameraOverlayPosition = position
-                    controller.resetCustomCameraOverlayFrame()
-                }
+    private var catPawMarks: some View {
+        let toes: [(CGFloat, CGFloat)] = [(-13, -3), (-5, -9), (5, -9), (13, -3)]
+        return ZStack {
+            Capsule().fill(Color(red: 0.96, green: 0.70, blue: 0.76)).frame(width: 20, height: 16).offset(y: 9)
+            ForEach(Array(toes.enumerated()), id: \.0) { i, toe in
+                Capsule().fill(Color(red: 0.96, green: 0.70, blue: 0.76)).frame(width: 7, height: 10)
+                    .rotationEffect(.degrees(i == 0 ? -20 : i == 3 ? 20 : 0)).offset(x: toe.0, y: toe.1)
             }
-        } label: {
-            menuChip(icon: "arrow.up.left.and.arrow.down.right", title: recordingState.cameraOverlayPosition.localizedDisplayName)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    private var cameraSizeMenu: some View {
-        Menu {
-            ForEach(CameraOverlaySize.allCases, id: \.self) { size in
-                Button(size.localizedDisplayName) {
-                    recordingState.cameraOverlaySize = size
-                    controller.updatePreview()
-                }
-            }
-        } label: {
-            menuChip(icon: "rectangle.arrowtriangle.2.inward", title: recordingState.cameraOverlaySize.localizedDisplayName)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    private var optionsMenu: some View {
-        Menu {
-            if recordingState.microphoneEnabled {
-                Picker(t("Microphone"), selection: $audioManager.selectedMicrophone) {
-                    ForEach(audioManager.availableMicrophones) { device in
-                        Text(device.name)
-                            .tag(device)
-                    }
-                }
-                .disabled(audioManager.isLoading)
-            }
-
-            if recordingState.cameraOverlayEnabled {
-                Picker(t("Camera"), selection: $cameraManager.selectedCameraID) {
-                    if cameraManager.availableCameras.isEmpty {
-                        Text(t("No camera available"))
-                            .tag("")
-                    } else {
-                        ForEach(cameraManager.availableCameras) { camera in
-                            Text(camera.name)
-                                .tag(camera.id)
-                        }
-                    }
-                }
-                .disabled(cameraManager.availableCameras.isEmpty)
-            }
-
-            if !recordingState.microphoneEnabled && !recordingState.cameraOverlayEnabled {
-                Text(t("No devices enabled"))
-            }
-        } label: {
-            Text(t("Devices"))
-                .font(.system(size: 13, weight: .semibold))
-            .frame(height: 46)
-            .padding(.horizontal, 12)
-            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    private func modeButton(_ mode: RecordingCaptureMode, icon: String, title: String) -> some View {
-        let selected = recordingState.captureMode == mode
-
-        return Button {
-            switch mode {
-            case .fullScreen:
-                recordingState.captureMode = .fullScreen
-                recordingState.selectedWindowTarget = nil
-                controller.updatePreview()
-            case .selectedArea:
-                controller.selectAreaForPreview()
-            case .selectedWindow:
-                controller.selectWindowForPreview()
-            }
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 19, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .frame(width: 54, height: 50)
-            .foregroundStyle(selected ? .white : .primary)
-            .background(selected ? NotchSettings.shared.accentColor.color.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(title)
-    }
-
-    private func toggleButton(isOn: Bool, icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 46, height: 46)
-                .foregroundStyle(isOn ? .white : .primary)
-                .background(isOn ? NotchSettings.shared.accentColor.color.opacity(0.85) : Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(title)
-    }
-
-    private func menuChip(icon: String, title: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
-        }
-        .frame(height: 46)
-        .padding(.horizontal, 10)
-        .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -599,7 +466,7 @@ private struct RecordingStopBarView: View {
         }
         .padding(8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: .black.opacity(0.24), radius: 18, y: 10)
+        .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
     }
 
     private func timeString(from duration: TimeInterval) -> String {
@@ -676,7 +543,7 @@ private struct RecordingRenderOptionsView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.24), radius: 18, y: 10)
+        .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
     }
 }
 

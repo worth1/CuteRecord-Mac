@@ -9,7 +9,6 @@ import AppKit
 import Combine
 import Speech
 
-// @Observable
 class DictationManager: ObservableObject {
     @Published var isRecording: Bool = false
     @Published var audioLevels: [CGFloat] = Array(repeating: 0, count: 40)

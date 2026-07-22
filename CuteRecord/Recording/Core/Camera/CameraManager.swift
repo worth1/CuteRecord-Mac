@@ -35,6 +35,8 @@ class CameraManager: NSObject, ObservableObject {
     var audioRecordingHandler: ((CMSampleBuffer) -> Void)?
     /// For speech recognition during recording — shares the same AVCaptureSession audio stream
     var speechAudioHandler: ((CMSampleBuffer) -> Void)?
+    /// Tracks video orientation for portrait/landscape resolution correction
+    private(set) var currentVideoOrientation: AVCaptureVideoOrientation = .landscapeRight
     private var captureGeneration: UInt64 = 0
     private var activeCameraID: String?
     private static let firstFrameTimeout: TimeInterval = 4.0
@@ -254,7 +256,7 @@ class CameraManager: NSObject, ObservableObject {
         } else {
             throw CameraError.cannotAddOutput
         }
-        
+
         // 添加音频输入和输出
         if enableAudio {
             addAudioInputAndOutput(session: session)
@@ -341,6 +343,13 @@ class CameraManager: NSObject, ObservableObject {
         frameBuffer.currentPixelBuffer
     }
 
+    /// Push an external frame (e.g., from network camera) into the buffer
+    /// so the camera overlay preview shows it. Pass nil to clear.
+    func pushExternalFrame(_ pixelBuffer: CVPixelBuffer?) {
+        guard let pixelBuffer else { frameBuffer.clear(); return }
+        _ = frameBuffer.push(pixelBuffer: pixelBuffer, timestamp: .invalid, enqueue: false)
+    }
+
     func dequeueLatestFrame() -> CameraFrameSample? {
         frameBuffer.dequeueLatest()
     }
@@ -388,31 +397,39 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     private func configureNativeFraming(for device: AVCaptureDevice) {
-        if #available(macOS 12.3, *) {
-            guard let bestFormat = preferredCenterStageFormat(for: device) else {
-                print("📷 Center Stage not supported on selected camera")
-                return
-            }
+        guard #available(macOS 12.3, *) else { return }
 
-            do {
-                try device.lockForConfiguration()
-                device.activeFormat = bestFormat.format
-
-                if bestFormat.supports30FPS {
-                    device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
-                    device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
-                }
-
-                device.unlockForConfiguration()
-                print("📷 Using Center Stage camera format: \(bestFormat.width)x\(bestFormat.height)")
-            } catch {
-                print("⚠️  Center Stage camera format failed: \(error.localizedDescription)")
-            }
-
-            AVCaptureDevice.centerStageControlMode = .cooperative
-            AVCaptureDevice.isCenterStageEnabled = true
-            print("📷 Center Stage requested for camera framing")
+        // External cameras (iPhone Continuity Camera): skip Center Stage
+        // format selection. Center Stage crops the frame, preventing access
+        // to the full sensor output. Use the device's default format instead.
+        if device.deviceType != .builtInWideAngleCamera {
+            print("📷 External camera — using default format, no Center Stage")
+            return
         }
+
+        guard let bestFormat = preferredCenterStageFormat(for: device) else {
+            print("📷 Center Stage not supported on selected camera")
+            return
+        }
+
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = bestFormat.format
+
+            if bestFormat.supports30FPS {
+                device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
+                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
+            }
+
+            device.unlockForConfiguration()
+            print("📷 Using Center Stage camera format: \(bestFormat.width)x\(bestFormat.height)")
+        } catch {
+            print("⚠️  Center Stage camera format failed: \(error.localizedDescription)")
+        }
+
+        AVCaptureDevice.centerStageControlMode = .cooperative
+        AVCaptureDevice.isCenterStageEnabled = true
+        print("📷 Center Stage requested for camera framing")
     }
 
     private func waitForFirstFrame(timeout: TimeInterval, generation: UInt64) async -> Bool {
@@ -562,6 +579,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
+        // Track orientation so currentResolution swaps width/height for portrait
+        currentVideoOrientation = connection.videoOrientation
+
         // 更新当前帧 — 仅在录制或有消费者时通过 MainActor 调度
         let hasRecordingConsumer = recordingFrameHandler != nil
         let frame = frameBuffer.push(
@@ -584,6 +604,70 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         }
         let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
         return CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
+    }
+
+    /// Whether the camera is external (not built-in Mac camera)
+    var isExternalCamera: Bool {
+        videoDevice?.deviceType != .builtInWideAngleCamera
+    }
+
+    /// Analyzes a frame to determine recording dimensions and whether cropping
+    /// is needed for external portrait cameras. Call BEFORE restarting capture
+    /// so the preview-stabilized orientation is used.
+    func analyzeRecordingFormat(from rawBuffer: CVPixelBuffer) -> (width: Int, height: Int, cropRect: CGRect?)? {
+        guard isExternalCamera else { return nil }
+
+        let frameW = CGFloat(CVPixelBufferGetWidth(rawBuffer))
+        let frameH = CGFloat(CVPixelBufferGetHeight(rawBuffer))
+        guard frameW > 0, frameH > 0, frameW > frameH else { return nil }
+
+        // Use videoOrientation from the running preview — it's stable at this point
+        let isPortrait: Bool
+        switch currentVideoOrientation {
+        case .portrait, .portraitUpsideDown:
+            isPortrait = true
+        default:
+            isPortrait = false
+        }
+
+        if isPortrait {
+            // Portrait content in landscape frame: content width ≈ H*H/W
+            let contentWidth = Int(frameH * frameH / frameW / 2) * 2
+            let contentHeight = Int(frameH) / 2 * 2
+            guard contentWidth > 0 else { return nil }
+            let cropX = (Int(frameW) - contentWidth) / 2
+            let cropRect = CGRect(x: CGFloat(cropX), y: 0,
+                                  width: CGFloat(contentWidth), height: CGFloat(contentHeight))
+            return (contentWidth, contentHeight, cropRect)
+        } else {
+            let w = Int(frameW) / 2 * 2
+            let h = Int(frameH) / 2 * 2
+            return (w, h, nil)
+        }
+    }
+
+    /// Crops a raw camera frame to the given rect (in raw frame coordinates)
+    /// and renders it to a new pixel buffer at the target size.
+    func cropFrame(_ rawBuffer: CVPixelBuffer, cropRect: CGRect, targetWidth: Int, targetHeight: Int) -> CVPixelBuffer? {
+        let ciImage = CIImage(cvPixelBuffer: rawBuffer)
+            .cropped(to: cropRect)
+            .transformed(by: CGAffineTransform(
+                translationX: -cropRect.origin.x,
+                y: -cropRect.origin.y
+            ))
+
+        var outputBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: targetWidth,
+            kCVPixelBufferHeightKey as String: targetHeight,
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, targetWidth, targetHeight,
+            kCVPixelFormatType_32BGRA, attrs as CFDictionary, &outputBuffer)
+        guard let output = outputBuffer else { return nil }
+
+        ciContext.render(ciImage, to: output)
+        return output
     }
 }
 

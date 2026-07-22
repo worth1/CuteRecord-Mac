@@ -8,7 +8,6 @@ import AppKit
 import SwiftUI
 import Combine
 
-// @Observable
 class NotchFrameTracker: ObservableObject {
     @Published var visibleHeight: CGFloat = 37 {
         didSet { updatePanel() }
@@ -29,7 +28,6 @@ class NotchFrameTracker: ObservableObject {
     }
 }
 
-// @Observable
 class OverlayContent: ObservableObject {
     @Published var words: [String] = []
     @Published var totalCharCount: Int = 0

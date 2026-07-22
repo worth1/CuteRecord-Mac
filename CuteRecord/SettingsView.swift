@@ -971,8 +971,6 @@ struct SettingsView: View {
                 }
             }
 
-            // Pagination section hidden — auto-advance is always on
-
             Spacer()
         }
         .padding(16)

@@ -14,3 +14,13 @@ reports/
 *.dmg
 *.zip
 *.tar.gz
+
+# Model files (download separately)
+*.onnx
+tokens.txt
+
+# Backup
+*backup*/
+
+# Release
+release.sh

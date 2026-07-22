@@ -126,8 +126,9 @@ class CircularCameraWindow: NSObject {
         let windowRect = NSRect(origin: windowOrigin, size: windowSize)
 
         if let window = cameraWindow {
-            window.level = overlayWindowLevel
-            window.isMovableByWindowBackground = false
+            window.level = .screenSaver + 2
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+            window.isMovableByWindowBackground = true
             window.ignoresMouseEvents = false
             
             // 如果形状改变，先销毁旧窗口再创建新窗口，确保只有一个窗口
@@ -172,20 +173,20 @@ class CircularCameraWindow: NSObject {
         guard let window = cameraWindow else { return }
         window.cameraWindowController = self
         
-        // Keep the camera above the editable region frame so it receives drag events.
-        window.level = overlayWindowLevel
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.isMovableByWindowBackground = false
+        // Keep the camera above all other windows so it receives drag events.
+        window.level = .screenSaver + 2
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        window.isMovableByWindowBackground = true
         window.backgroundColor = .clear
         window.isOpaque = false
-        window.hasShadow = false
+        window.hasShadow = true
         window.ignoresMouseEvents = false
         window.isReleasedWhenClosed = false
         window.sharingType = .none
-        
+
         updateContentView(size: windowSize, shape: shape)
-        
-        // 显示窗口
+
+        // 强制前置显示
         window.orderFrontRegardless()
         
         print("✅ 摄像头窗口已显示 - 位置: \(position), 大小: \(windowSize), 形状: \(shape.displayName)")
@@ -284,14 +285,12 @@ class CircularCameraWindow: NSObject {
 
         let startOrigin = dragStartOrigin ?? window.frame.origin
         let startMouseLocation = dragStartMouseLocation ?? mouseLocation
-        let proposedOrigin = NSPoint(
+        let newOrigin = NSPoint(
             x: startOrigin.x + mouseLocation.x - startMouseLocation.x,
             y: startOrigin.y + mouseLocation.y - startMouseLocation.y
         )
-        let clamped = clampedOriginForCurrentBounds(proposedOrigin, windowSize: window.frame.size)
-        let newFrame = NSRect(origin: clamped, size: window.frame.size)
-        window.setFrame(newFrame, display: true, animate: false)
-        notifyFrameChange(visibleOverlayFrame(for: newFrame))
+        window.setFrameOrigin(newOrigin)
+        notifyFrameChange(visibleOverlayFrame(for: NSRect(origin: newOrigin, size: window.frame.size)))
     }
 
     func endCameraDrag() {
@@ -613,23 +612,29 @@ struct CameraOverlayView: View {
     }
     
     private func updateCameraImage() {
-        guard cameraManager.isCapturing,
-              let pixelBuffer = cameraManager.getCurrentFrame() else {
+        guard cameraManager.isCapturing else {
+            print("📷 预览跳过: cameraManager.isCapturing=false")
+            return
+        }
+        guard let pixelBuffer = cameraManager.getCurrentFrame() else {
+            print("📷 预览跳过: getCurrentFrame()=nil")
             return
         }
 
-        let processedImage = CameraFrameProcessor.mirroredVisibleImage(from: pixelBuffer)
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let extent = ciImage.extent
 
         if shape == .roundedSquare {
-            let aspectRatio = processedImage.extent.width / max(processedImage.extent.height, 1)
+            let aspectRatio = extent.width / max(extent.height, 1)
             if aspectRatio.isFinite, aspectRatio > 0 {
                 windowController?.updateAspectRatioIfNeeded(to: aspectRatio)
             }
         }
-        
-        // 转换CVPixelBuffer到NSImage
-        if let cgImage = ciContext.createCGImage(processedImage.image, from: processedImage.extent) {
-            currentImage = NSImage(cgImage: cgImage, size: processedImage.extent.size)
+
+        if let cgImage = ciContext.createCGImage(ciImage, from: extent) {
+            currentImage = NSImage(cgImage: cgImage, size: extent.size)
+        } else {
+            print("📷 预览跳过: createCGImage failed")
         }
     }
 }

@@ -10,8 +10,7 @@ import AppKit
 // MARK: - 权限请求浮窗
 
 class PermissionRequestWindow: NSObject {
-    private var panel: NSPanel?
-    private var hostingView: NSView?
+    private let cutePanel = CutePanel()
 
     func show(
         permissionsManager: PermissionsManager,
@@ -19,64 +18,25 @@ class PermissionRequestWindow: NSObject {
         onComplete: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
-        dismiss()
-
-        let alertView = PermissionRequestAlertView(
-            permissionsManager: permissionsManager,
-            onRequestFileAccess: onRequestFileAccess,
-            onComplete: { [weak self] in
-                self?.dismiss()
-                onComplete()
-            },
-            onCancel: { [weak self] in
-                self?.dismiss()
-                onCancel()
-            }
+        cutePanel.show(
+            PermissionRequestAlertView(
+                permissionsManager: permissionsManager,
+                onRequestFileAccess: onRequestFileAccess,
+                onComplete: { [weak self] in
+                    self?.cutePanel.dismiss { onComplete() }
+                },
+                onCancel: { [weak self] in
+                    self?.cutePanel.dismiss { onCancel() }
+                }
+            )
+            .cutePanelStyle(),
+            width: 360, height: 310,
+            movable: true
         )
-
-        let hostingView = NSHostingView(rootView: alertView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 320)
-        self.hostingView = hostingView
-
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
-        panel.contentView = hostingView
-        panel.center()
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        panel.makeKey()
-
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.25
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
-        }
-
-        self.panel = panel
     }
 
     func dismiss() {
-        guard let panel = panel else { return }
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.15
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            panel.orderOut(nil)
-            panel.close()
-        })
-        self.panel = nil
-        hostingView = nil
+        cutePanel.dismiss()
     }
 }
 
@@ -91,31 +51,29 @@ struct PermissionRequestAlertView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(uiText("Permission Required for Recording"))
+            Text("获得权限以进行视频录制")
                 .font(.title3)
                 .fontWeight(.semibold)
                 .padding(.top, 24)
                 .padding(.bottom, 12)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(uiText("The following permissions are needed for video recording:"))
+                Text("需要以下权限：")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 4)
 
-                PermissionRow(icon: "rectangle.on.rectangle", text: uiText("Screen Recording: Capture screen content"))
-                PermissionRow(icon: "mic.fill", text: uiText("Microphone: Record audio"))
-                PermissionRow(icon: "camera.fill", text: uiText("Camera: Record video"))
+                PermissionRow(icon: "folder", text: "文件保存：将录制文件保存在本地")
+                PermissionRow(icon: "mic.fill", text: "麦克风：录制声音")
+                PermissionRow(icon: "camera.fill", text: "摄像头：录制画面")
             }
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 24)
             .padding(.bottom, 20)
 
             if isRequesting {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text(InterfaceLanguageSettings.shared.format(
-                        uiText("Requesting %@ permission…"), currentRequestingPermission))
+                    ProgressView().scaleEffect(0.8)
+                    Text("正在请求「\(currentRequestingPermission)」权限…")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -128,7 +86,7 @@ struct PermissionRequestAlertView: View {
                 Button {
                     onCancel()
                 } label: {
-                    Text(uiText("Cancel"))
+                    Text("取消")
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
                 }
@@ -141,7 +99,7 @@ struct PermissionRequestAlertView: View {
                 Button {
                     requestAllPermissions()
                 } label: {
-                    Text(uiText("Continue"))
+                    Text("继续")
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
                         .fontWeight(.semibold)
@@ -152,33 +110,27 @@ struct PermissionRequestAlertView: View {
             }
             .frame(height: 44)
         }
-        .frame(width: 420)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.12), radius: 20, x: 0, y: 4)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
+        .frame(width: 360)
+        .onAppear {
+            // Auto-dismiss if camera + mic already granted (file access is a folder picker, not a system permission)
+            if permissionsManager.cameraAuthorized && permissionsManager.microphoneAuthorized {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { onComplete() }
+            }
+        }
     }
 
     private func requestAllPermissions() {
         isRequesting = true
 
         Task {
-            currentRequestingPermission = uiText("File Access")
-            await MainActor.run {
-                onRequestFileAccess()
-            }
+            currentRequestingPermission = "文件保存"
+            await MainActor.run { onRequestFileAccess() }
             try? await Task.sleep(nanoseconds: 500_000_000)
 
-            currentRequestingPermission = uiText("Microphone")
+            currentRequestingPermission = "麦克风"
             await permissionsManager.requestMicrophonePermission()
 
-            currentRequestingPermission = uiText("Camera")
+            currentRequestingPermission = "摄像头"
             await permissionsManager.requestCameraPermission()
 
             isRequesting = false

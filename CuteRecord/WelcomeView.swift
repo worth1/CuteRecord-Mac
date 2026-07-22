@@ -30,7 +30,7 @@ struct WelcomeView: View {
             Spacer().frame(height: 8)
 
             // Tagline
-            Text(t("A cute teleprompter for video recording"))
+            Text("专门为口播视频录制打造的提词器")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .opacity(appear ? 1 : 0)
@@ -40,9 +40,9 @@ struct WelcomeView: View {
 
             // Feature highlights
             VStack(alignment: .leading, spacing: 12) {
-                welcomeFeature(icon: "doc.text", title: t("Write your script"), desc: t("Markdown editor with AI-powered breath cuts"))
-                welcomeFeature(icon: "rectangle.on.rectangle", title: t("Read from teleprompter"), desc: t("Notch, floating, or fullscreen — your choice"))
-                welcomeFeature(icon: "record.circle", title: t("Record with confidence"), desc: t("One-click to record your video"))
+                welcomeFeature(icon: "doc.text", title: "撰写脚本", desc: "支持 Markdown，AI 一键断句优化节奏")
+                welcomeFeature(icon: "rectangle.on.rectangle", title: "提词器跟随", desc: "灵动岛、悬浮窗、全屏三种模式随心选")
+                welcomeFeature(icon: "record.circle", title: "一键录制", desc: "屏幕 + 摄像头 + 音频一次搞定")
             }
             .padding(.horizontal, 56)
             .opacity(appear ? 1 : 0)
@@ -54,7 +54,7 @@ struct WelcomeView: View {
             Button {
                 onGetStarted()
             } label: {
-                Text(t("Get Started"))
+                Text("开始使用")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 200, height: 44)
