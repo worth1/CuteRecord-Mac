@@ -150,5 +150,8 @@ CuteRecord/
 ---
 
 <p align="center">
-  <sub>可爱地录制，自信地表达</sub>
+  <img width="128" height="128" alt="image" src="https://github.com/user-attachments/assets/02e728ef-7212-41db-8cc5-546a27377cd0" />
+ 
 </p>
+<sub>可爱地录制，自信地表达</sub>
+<sub>为口播而生，连接iOS版使用效果更佳</sub>
