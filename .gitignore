@@ -24,3 +24,7 @@ tokens.txt
 
 # Release
 release.sh
+
+# Vendor (dylibs & models — download from sherpa-onnx releases)
+Vendor/SherpaOnnxShared/
+Vendor/Models/

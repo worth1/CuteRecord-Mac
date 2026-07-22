@@ -109,10 +109,19 @@
 ```bash
 git clone https://github.com/worth1/CuteRecord.git
 cd CuteRecord
+
+# 下载离线语音识别依赖（必需，约 120MB）
+mkdir -p Vendor/SherpaOnnxShared/lib Vendor/Models/sherpa-onnx-streaming-paraformer-bilingual-zh-en
+cd Vendor/SherpaOnnxShared/lib
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/libsherpa-onnx-c-api.dylib
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/libonnxruntime.1.24.4.dylib
+ln -s libonnxruntime.1.24.4.dylib libonnxruntime.dylib
+
+# 下载模型文件（约 30MB，跨平台通用，也可从 iOS 项目复制）
+# encoder-epoch-99-avg-1.int8.onnx / decoder-epoch-99-avg-1.onnx / joiner-epoch-99-avg-1.int8.onnx / tokens.txt
+
 open CuteRecord.xcodeproj
 ```
-
-> 离线语音识别需要 SherpaOnnx 模型和 dylib。运行 `scripts/setup_sherpa_onnx.sh` 自动下载，或从 [SherpaOnnx Releases](https://github.com/k2-fsa/sherpa-onnx/releases) 手动下载并放入 `Vendor/` 目录。
 
 ---
 
